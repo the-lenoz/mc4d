@@ -16,7 +16,9 @@
 #include <vector>
 #include <glm/glm.hpp>
 
-static const int32_t DIM = 16;
+static const int32_t CHUNK_DIM = 10;
+static const int32_t CHUNKS_PER_AXIS = 4;
+static const int32_t DIM = CHUNK_DIM * CHUNKS_PER_AXIS;
 static const int32_t WD_X = DIM;
 static const int32_t WD_Y = DIM;
 static const int32_t WD_Z = DIM;
@@ -29,6 +31,7 @@ class World {
 
   HyperCubeTypes hypercubes[WD_X][WD_Y][WD_Z][WD_W];
 
+  void generateChunk(int32_t chunkX, int32_t chunkY, int32_t chunkZ, int32_t chunkW);
   HyperCubeTypes worldSample(int32_t x, int32_t y, int32_t z, int32_t w);
 public:
   std::vector<glm::vec4> stoneLocs;

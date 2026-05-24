@@ -117,7 +117,7 @@ struct Skybox {
     glUniform3fv(eye3Loc, 1, glm::value_ptr(eye3)); GL_ERR_CHK;
     glUniform1i(sbLoc, 3); GL_ERR_CHK;
 
-    glDrawArrays(GL_TRIANGLES, 0, sizeof(skybox_verts)/sizeof(skybox_verts[0]));
+    glDrawArrays(GL_TRIANGLES, 0, sizeof(skybox_verts)/(3 * sizeof(skybox_verts[0])));
   }
 };
 

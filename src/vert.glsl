@@ -16,7 +16,7 @@ uniform float recipTanViewAngle;
 uniform mat4 projMat3D;
 
 // The points in space (and the # of them)
-uniform sampler1D hypercube;
+uniform samplerBuffer hypercube;
 uniform float hcCount;
 
 uniform float offset;
@@ -27,13 +27,13 @@ uniform mat4 srm;
 // Passing the color to the geometry shader
 out vec4 vcolor;
 out vec3 vpos3;
+out float vdepth4;
 
 // This function accepts some pre-computed values which will help speed stuff up
 vec4 projectTo3D()
 {
-  // Get the position of the hypercube based on a texture lookuo
-  // TODO(michael): support more cells by using 2D textures instead of 1D ones
-  vec4 realPosition = position + texture(hypercube, gl_InstanceID / hcCount);
+  // Get the position of the hypercube based on a texture lookup.
+  vec4 realPosition = position + texelFetch(hypercube, gl_InstanceID);
 
   // HACK(michael): Offset such that the world is centered at (0,0,0,0)
   // realPosition -= vec4(7.5, 7.5, 7.5, 7.5);
@@ -42,9 +42,10 @@ vec4 projectTo3D()
 
   // Get the position in eye-space
   vec4 eyePos = (realPosition - eye) * worldToEyeMat4D;
+  vdepth4 = eyePos.w;
 
   // Scale for perspective
-  float scale = recipTanViewAngle / eyePos.w;
+  float scale = recipTanViewAngle / max(eyePos.w, 0.001);
   return vec4(scale * eyePos.xyz, 1);
 }
 

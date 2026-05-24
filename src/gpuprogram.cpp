@@ -1,7 +1,9 @@
 // GPUProgram class
 
 
-#include "gpuProgram.h"
+#include "gpuprogram.h"
+
+#include <cstring>
 
 
 void ShaderProgram::validateShader(GLuint shader) {
@@ -30,13 +32,11 @@ void ShaderProgram::validateProgram() {
   if (length > 0)
     std::cout << "Program " << progId << " link log: " << buffer << std::endl;
 
-  glValidateProgram(progId);
-
   GLint status;
-  glGetProgramiv(progId, GL_VALIDATE_STATUS, &status);
+  glGetProgramiv(progId, GL_LINK_STATUS, &status);
 
   if (status == GL_FALSE) {
-    std::cerr << "Error validating program " << progId << std::endl;
+    std::cerr << "Error linking program " << progId << std::endl;
 
     GLint logSize = 0;
     glGetProgramiv(progId, GL_INFO_LOG_LENGTH, &logSize);

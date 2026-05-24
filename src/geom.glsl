@@ -10,19 +10,24 @@ in vec4 vcolor[];
 out vec4 color;
 
 in vec3 vpos3[];
+in float vdepth4[];
 out vec3 pos3;
 
 out vec3 normal;
 
 void main()
 {
+  if (vdepth4[0] <= 0.25 || vdepth4[1] <= 0.25 || vdepth4[2] <= 0.25) {
+    return;
+  }
+
   // Calculate a normal
   vec3 a = vpos3[1] - vpos3[0];
   vec3 b = vpos3[2] - vpos3[0];
   normal = normalize(cross(a, b));
 
   // Ensure it is pointing toward the camera
-  if (dot(normal, pos3 - eyePos3) > 0) {
+  if (dot(normal, vpos3[0] - eyePos3) > 0) {
     normal = -normal;
   }
 

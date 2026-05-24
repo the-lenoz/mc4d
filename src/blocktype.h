@@ -16,6 +16,7 @@
 
 struct BlockType {
   GLuint tex;
+  GLuint buffer;
   size_t count;
   float indicator;
 
@@ -23,20 +24,18 @@ struct BlockType {
     count = pts->size();
     indicator = ind;
 
-    GLint maxTextureSize;
-    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
+    std::cout << "Block type has " << count << " tesseracts\n";
 
-    std::cout << "Texture " << tex << " has " << count << " tesseracts\n";
-    // Ensure that we have a small enough set
-    assert((GLint) count < maxTextureSize);
+    glGenBuffers(1, &buffer);
+    glBindBuffer(GL_TEXTURE_BUFFER, buffer);
+    glBufferData(GL_TEXTURE_BUFFER,
+                 count * sizeof(glm::vec4),
+                 pts->data(),
+                 GL_STATIC_DRAW);
 
     glGenTextures(1, &tex);
-    glBindTexture(GL_TEXTURE_1D, tex);
-    glTexImage1D(GL_TEXTURE_1D, 0, GL_RGBA,
-                 count,
-                 0, GL_RGBA, GL_FLOAT,
-                 pts->data());
-    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glBindTexture(GL_TEXTURE_BUFFER, tex);
+    glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, buffer);
     GL_ERR_CHK;
   }
 
@@ -44,7 +43,7 @@ struct BlockType {
     // Bind the texture
     glUniform1i(texLoc, 0);
     glActiveTexture(GL_TEXTURE0 + 0);
-    glBindTexture(GL_TEXTURE_1D, tex);
+    glBindTexture(GL_TEXTURE_BUFFER, tex);
 
     // Bind the count
     glUniform1f(countLoc, count);

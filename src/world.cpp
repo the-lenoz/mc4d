@@ -18,18 +18,15 @@ HyperCubeTypes World::worldSample(int32_t x, int32_t y, int32_t z, int32_t w) {
   }
 }
 
-World::World() {
-  std::cout << noiseSample(glm::ivec4(0, 0, 0, 0)) << "\n";
-
-  // Ensure that the perm matrix is initialized
-  initPerm();
-  // Loop over the possible things in the world
-  std::cout << "Starting world generation" << std::endl;
-  int32_t x, y, z, w;
-  for (x=0; x<WORLD_DIM.x; x++) {
-    for (y=0; y<WORLD_DIM.y; y++) {
-      for (z=0; z<WORLD_DIM.z; z++) {
-        for (w=0; w<WORLD_DIM.w; w++) {
+void World::generateChunk(int32_t chunkX, int32_t chunkY, int32_t chunkZ, int32_t chunkW) {
+  for (int32_t lx=0; lx<CHUNK_DIM; lx++) {
+    for (int32_t ly=0; ly<CHUNK_DIM; ly++) {
+      for (int32_t lz=0; lz<CHUNK_DIM; lz++) {
+        for (int32_t lw=0; lw<CHUNK_DIM; lw++) {
+          int32_t x = chunkX * CHUNK_DIM + lx;
+          int32_t y = chunkY * CHUNK_DIM + ly;
+          int32_t z = chunkZ * CHUNK_DIM + lz;
+          int32_t w = chunkW * CHUNK_DIM + lw;
           double sample = noiseSample(glm::dvec4(x, y, z, w));
 
           if (sample < 0.5) {
@@ -40,7 +37,28 @@ World::World() {
         }
       }
     }
-    std::cout << x << "/" << WORLD_DIM.x << "\n";
+  }
+}
+
+World::World() {
+  std::cout << noiseSample(glm::ivec4(0, 0, 0, 0)) << "\n";
+
+  // Ensure that the perm matrix is initialized
+  initPerm();
+  // Loop over the possible things in the world, chunk by chunk.
+  std::cout << "Starting chunked world generation ("
+            << CHUNKS_PER_AXIS << "^4 chunks, "
+            << CHUNK_DIM << "^4 cells each)" << std::endl;
+  int32_t x, y, z, w;
+  for (int32_t cx=0; cx<CHUNKS_PER_AXIS; cx++) {
+    for (int32_t cy=0; cy<CHUNKS_PER_AXIS; cy++) {
+      for (int32_t cz=0; cz<CHUNKS_PER_AXIS; cz++) {
+        for (int32_t cw=0; cw<CHUNKS_PER_AXIS; cw++) {
+          generateChunk(cx, cy, cz, cw);
+        }
+      }
+    }
+    std::cout << cx + 1 << "/" << CHUNKS_PER_AXIS << " chunk slabs\n";
   }
   std::cout << "Done world generation" << std::endl;
 

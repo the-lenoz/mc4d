@@ -1,7 +1,7 @@
 #include "tesseract.h"
 #include "viewport.h"
 #include "config.h"
-#include "gpuProgram.h"
+#include "gpuprogram.h"
 #include "world.h"
 #include "roundworld.h"
 #include "project.h"
@@ -13,10 +13,12 @@
 #include "gl.h"
 
 #include <glm/gtc/type_ptr.hpp>
+#define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/rotate_vector.hpp>
 
 #include <stdlib.h>
 #include <iostream>
+#include <memory>
 
 // The state of the world.
 static struct WorldState {
@@ -34,6 +36,11 @@ static struct WorldState {
 
   double rot3X, rot3Y;
 
+  // Mouse-look camera angles for free-fly mode.
+  double yaw, pitch;
+  double lastMouseX, lastMouseY;
+  bool mouseLookInitialized;
+
   // Zoom
   double zoom;
 
@@ -44,6 +51,9 @@ static struct WorldState {
   // Display the scene
   bool displayBlocks, displayWireframe, hideWater;
 
+  // Free-fly navigation mode
+  bool flyMode;
+
   // Which version of the world to display (square or round)
   bool squareWorld;
 
@@ -52,6 +62,11 @@ static struct WorldState {
   GLuint solidBlocksColorTex, waterBlocksColorTex;
   GLuint blocksDepthTex;
 } WS;
+
+static void setSkyClearColor()
+{
+  glClearColor(0.62f, 0.84f, 1.0f, 1.0f);
+}
 
 // If GLFW reports an error, this will be called
 static void errorCallback(int error, const char* description)
@@ -81,6 +96,12 @@ static void keyCallback(GLFWwindow* window, int key,
     case GLFW_KEY_PERIOD: WS.displayBlocks = !WS.displayBlocks; break;
     case GLFW_KEY_SEMICOLON: WS.squareWorld = !WS.squareWorld; break;
     case GLFW_KEY_APOSTROPHE: WS.hideWater = !WS.hideWater; break;
+    case GLFW_KEY_TAB:
+      WS.flyMode = !WS.flyMode;
+      WS.mouseLookInitialized = false;
+      glfwSetInputMode(window, GLFW_CURSOR,
+                       WS.flyMode ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+      break;
 
     case GLFW_KEY_0:
       WS.rotXY = 0;
@@ -106,6 +127,12 @@ static void keyCallback(GLFWwindow* window, int key,
 
 static void resizeCallback(GLFWwindow *, int width, int height)
 {
+  if (width <= 0 || height <= 0) {
+    return;
+  }
+
+  glViewport(0, 0, width, height);
+
   glBindTexture(GL_TEXTURE_2D, WS.waterBlocksColorTex);
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
 
@@ -116,6 +143,45 @@ static void resizeCallback(GLFWwindow *, int width, int height)
   glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, width, height, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, NULL);
 
   GL_ERR_CHK;
+}
+
+static void updateFlyCameraBasis()
+{
+  const glm::vec4 worldUp(0, 1, 0, 0);
+  glm::vec4 horizontalForward(cosf(WS.yaw), 0, sinf(WS.yaw), 0);
+
+  WS.up = worldUp;
+  WS.over = normalize(glm::vec4(-sinf(WS.yaw), 0, cosf(WS.yaw), 0));
+  WS.forward = normalize((float) cos(WS.pitch) * horizontalForward +
+                         (float) sin(WS.pitch) * worldUp);
+}
+
+static void updateFlyCameraFromMouse(GLFWwindow *window)
+{
+  double mouseX, mouseY;
+  glfwGetCursorPos(window, &mouseX, &mouseY);
+
+  if (!WS.mouseLookInitialized) {
+    WS.lastMouseX = mouseX;
+    WS.lastMouseY = mouseY;
+    WS.mouseLookInitialized = true;
+    return;
+  }
+
+  const double MOUSE_SENSITIVITY = 0.0025;
+  const double MAX_PITCH = 1.45;
+  double deltaX = mouseX - WS.lastMouseX;
+  double deltaY = mouseY - WS.lastMouseY;
+
+  WS.lastMouseX = mouseX;
+  WS.lastMouseY = mouseY;
+  WS.yaw -= deltaX * MOUSE_SENSITIVITY;
+  WS.pitch -= deltaY * MOUSE_SENSITIVITY;
+
+  if (WS.pitch > MAX_PITCH) { WS.pitch = MAX_PITCH; }
+  if (WS.pitch < -MAX_PITCH) { WS.pitch = -MAX_PITCH; }
+
+  updateFlyCameraBasis();
 }
 
 // Framebuffer generation code adapted from example code.
@@ -180,7 +246,25 @@ int main(int argc, char **argv)
   GLFWwindow* window;
   glfwSetErrorCallback(errorCallback);
 
-  if (!glfwInit())
+#if GLFW_VERSION_MAJOR > 3 || (GLFW_VERSION_MAJOR == 3 && GLFW_VERSION_MINOR >= 4)
+  bool hasWaylandDisplay = getenv("WAYLAND_DISPLAY");
+  bool hasX11Display = getenv("DISPLAY");
+
+  if (hasWaylandDisplay)
+    glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
+
+  bool glfwInitialized = glfwInit();
+
+  if (!glfwInitialized && hasWaylandDisplay && hasX11Display) {
+    glfwTerminate();
+    glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+    glfwInitialized = glfwInit();
+  }
+#else
+  bool glfwInitialized = glfwInit();
+#endif
+
+  if (!glfwInitialized)
     exit(EXIT_FAILURE);
 
   // Ensure that we have the correct version of OpenGl context
@@ -199,12 +283,18 @@ int main(int argc, char **argv)
   glfwMakeContextCurrent(window);
   glfwSwapInterval(1);
   glfwSetKeyCallback(window, keyCallback);
+  glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+#ifdef GLFW_RAW_MOUSE_MOTION
+  if (glfwRawMouseMotionSupported()) {
+    glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+  }
+#endif
 
   // Initialize GLEW
   glewExperimental = GL_TRUE;
   glErrChk("BEFORE_GLEW_ERROR");
   GLenum glewError = glewInit();
-  if (glewError != GLEW_OK) {
+  if (glewError != GLEW_OK && glewError != GLEW_ERROR_NO_GLX_DISPLAY) {
     std::cerr << "Error: " << glewGetErrorString(glewError) << std::endl;
     exit(EXIT_FAILURE);
   }
@@ -338,9 +428,35 @@ int main(int argc, char **argv)
   WS.over = glm::vec4(0, 0, 1, 0);
   WS.eye = glm::vec4(-32, 0, 0, 0);
   WS.forward = normalize(glm::vec4(1, 0, 0, 0)); // normalize(-WS.eye);
+  WS.rotXY = 0;
+  WS.rotXZ = 0;
+  WS.rotXW = 0;
+  WS.rotYZ = 0;
+  WS.rotYW = 0;
+  WS.rotZW = 0;
+  WS.rot3X = 0;
+  WS.rot3Y = 0;
+  WS.yaw = 0;
+  WS.pitch = 0;
+  WS.lastMouseX = 0;
+  WS.lastMouseY = 0;
+  WS.mouseLookInitialized = false;
+  WS.zoom = 0;
+  WS.autorotXY = false;
+  WS.autorotXZ = false;
+  WS.autorotXW = false;
+  WS.autorotYZ = false;
+  WS.autorotYW = false;
+  WS.autorotZW = false;
+  WS.autorot3X = false;
+  WS.autorot3Y = false;
 
   WS.displayBlocks = true;
   WS.displayWireframe = false;
+  WS.hideWater = true;
+  WS.squareWorld = true;
+  WS.flyMode = true;
+  updateFlyCameraBasis();
 
   // Get the location of the uniforms on the GPU
   GLuint worldToEyeMat4DLoc = mainShader.uniformLocation("worldToEyeMat4D");
@@ -373,6 +489,7 @@ int main(int argc, char **argv)
   {
     int width, height;
     glfwGetFramebufferSize(window, &width, &height);
+    glViewport(0, 0, width, height);
 
     generateFrameBuffer(WS.solidBlocksColorTex, WS.blocksDepthTex, WS.solidBlocksFB,
                         width, height, true);
@@ -415,13 +532,46 @@ int main(int argc, char **argv)
     float ratio;
     int width, height;
     glfwGetFramebufferSize(window, &width, &height);
+    if (height <= 0) { height = 1; }
     ratio = width / (float) height;
 
     // World state updating */
     {
       const float SPEED = 1.00;
-      // Get the component of forward perpendicular to up
-      glm::vec4 perpForward = normalize(WS.forward - (glm::dot(WS.up, WS.forward) * WS.up));
+
+      if (WS.flyMode) {
+        const float MOVE_SPEED = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) ? 24.0f : 8.0f;
+
+        updateFlyCameraFromMouse(window);
+
+        glm::vec4 horizontalForward(cosf(WS.yaw), 0, sinf(WS.yaw), 0);
+        glm::vec4 wAxis(0, 0, 0, 1);
+        glm::vec4 move(0);
+
+        if (glfwGetKey(window, GLFW_KEY_W)) { move += horizontalForward; }
+        if (glfwGetKey(window, GLFW_KEY_S)) { move -= horizontalForward; }
+        if (glfwGetKey(window, GLFW_KEY_D)) { move -= WS.over; }
+        if (glfwGetKey(window, GLFW_KEY_A)) { move += WS.over; }
+        if (glfwGetKey(window, GLFW_KEY_SPACE)) { move += WS.up; }
+        if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT)) { move -= WS.up; }
+        if (glfwGetKey(window, GLFW_KEY_E)) { move += wAxis; }
+        if (glfwGetKey(window, GLFW_KEY_Q)) { move -= wAxis; }
+
+        const float VIEW_ANGLE_SPEED = 45.0f;
+        if (glfwGetKey(window, GLFW_KEY_RIGHT_BRACKET)) {
+          WS.viewAngle += VIEW_ANGLE_SPEED * delta;
+        }
+        if (glfwGetKey(window, GLFW_KEY_LEFT_BRACKET)) {
+          WS.viewAngle -= VIEW_ANGLE_SPEED * delta;
+        }
+
+        if (WS.viewAngle < 25.0f) { WS.viewAngle = 25.0f; }
+        if (WS.viewAngle > 100.0f) { WS.viewAngle = 100.0f; }
+
+        if (length(move) > 0) {
+          WS.eye += normalize(move) * MOVE_SPEED * (float) delta;
+        }
+      } else {
 
 #define ADJUST(uk, dk, var) if (glfwGetKey(window, GLFW_KEY_##uk)) {  \
         WS.var += SPEED * delta; \
@@ -461,6 +611,7 @@ int main(int argc, char **argv)
       }
       if (glfwGetKey(window, GLFW_KEY_MINUS) && WS.zoom > -5) {
         WS.zoom -= ZOOM_SPEED * delta;
+      }
       }
     }
 
@@ -532,7 +683,8 @@ int main(int argc, char **argv)
       glUniform4fv(eyeLoc, 1, glm::value_ptr(WS.eye)); GL_ERR_CHK;
       glUniform3fv(eyePos3Loc, 1, glm::value_ptr(eyePos3)); GL_ERR_CHK;
       glUniform1f(recipTanViewAngleLoc, invTanViewAngle); GL_ERR_CHK;
-      glUniform1f(offsetLoc, WS.squareWorld ? 7.5 : 15.5); GL_ERR_CHK;
+      glUniform1f(offsetLoc, WS.squareWorld ? ((float) WORLD_DIM.x - 1.0f) / 2.0f
+                                           : ((float) ROUNDWORLD_DIM.x - 1.0f) / 2.0f); GL_ERR_CHK;
       glUniformMatrix4fv(worldToEyeMat4DLoc, 1, GL_FALSE, glm::value_ptr(worldToEyeMat4D)); GL_ERR_CHK;
       glUniformMatrix4fv(projMat3DLoc, 1, GL_FALSE, glm::value_ptr(projMat3D)); GL_ERR_CHK;
       glUniformMatrix4fv(srmLoc, 1, GL_FALSE, glm::value_ptr(srm)); GL_ERR_CHK;
@@ -543,7 +695,7 @@ int main(int argc, char **argv)
       // Render the solid geometry to a texture, storing the depth values in the depth texture
       // which is shared between the solid block frame buffer and the water frame buffer.
       mainShader.activate();
-      glClearColor( 77.0/255, 219.0/255, 213.0/255, 1.0 );
+      setSkyClearColor();
       glBindFramebuffer(GL_FRAMEBUFFER, WS.solidBlocksFB);
       glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
 
@@ -582,7 +734,7 @@ int main(int argc, char **argv)
       // Render to the screen, binding the solid and water blocks to a shader, and blending
       // them together before outputting to the screen.
       glBindFramebuffer(GL_FRAMEBUFFER, 0);
-      glClearColor(1, 0, 1, 1); // Magenta - useful error color
+      setSkyClearColor();
       glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
 
       blendShader.activate();
@@ -598,7 +750,7 @@ int main(int argc, char **argv)
       view.draw();
     } else {
       // Just clear the screen to the background sky color
-      glClearColor( 77.0/255, 219.0/255, 213.0/255, 1.0 );
+      setSkyClearColor();
       glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
     }
 
