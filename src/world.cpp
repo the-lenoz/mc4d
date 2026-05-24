@@ -7,6 +7,9 @@
 #include <utility>
 
 static const int32_t WATER_LEVEL = 0;
+static const float PLAYER_RADIUS = 0.35f;
+static const float PLAYER_EYE_HEIGHT = 1.62f;
+static const float PLAYER_HEADROOM = 0.15f;
 
 static inline double clamp01(double value) {
   if (value < 0.0) { return 0.0; }
@@ -136,14 +139,14 @@ World::WorldData World::generateAround(glm::ivec4 centerChunk) {
             << centerChunk.z << ", "
             << centerChunk.w << std::endl;
 
-  for (int32_t cx=centerChunk.x - ACTIVE_CHUNK_RADIUS;
-       cx<=centerChunk.x + ACTIVE_CHUNK_RADIUS; cx++) {
-    for (int32_t cy=centerChunk.y - ACTIVE_CHUNK_RADIUS;
-         cy<=centerChunk.y + ACTIVE_CHUNK_RADIUS; cy++) {
-      for (int32_t cz=centerChunk.z - ACTIVE_CHUNK_RADIUS;
-           cz<=centerChunk.z + ACTIVE_CHUNK_RADIUS; cz++) {
-        for (int32_t cw=centerChunk.w - ACTIVE_CHUNK_RADIUS;
-             cw<=centerChunk.w + ACTIVE_CHUNK_RADIUS; cw++) {
+  for (int32_t cx=centerChunk.x - ACTIVE_CHUNK_RADIUS_XZ;
+       cx<=centerChunk.x + ACTIVE_CHUNK_RADIUS_XZ; cx++) {
+    for (int32_t cy=centerChunk.y - ACTIVE_CHUNK_RADIUS_Y;
+         cy<=centerChunk.y + ACTIVE_CHUNK_RADIUS_Y; cy++) {
+      for (int32_t cz=centerChunk.z - ACTIVE_CHUNK_RADIUS_XZ;
+           cz<=centerChunk.z + ACTIVE_CHUNK_RADIUS_XZ; cz++) {
+        for (int32_t cw=centerChunk.w - ACTIVE_CHUNK_RADIUS_W;
+             cw<=centerChunk.w + ACTIVE_CHUNK_RADIUS_W; cw++) {
           generateChunk(data, cx, cy, cz, cw);
         }
       }
@@ -219,6 +222,27 @@ bool World::isSolidAt(glm::vec4 position) {
                      (int32_t) std::floor(position.w)) >= HCT_SOLID_START;
 }
 
+bool World::collidesWithPlayer(glm::vec4 eyePosition) {
+  const float xOffsets[] = {-PLAYER_RADIUS, PLAYER_RADIUS};
+  const float zOffsets[] = {-PLAYER_RADIUS, PLAYER_RADIUS};
+  const float wOffsets[] = {-PLAYER_RADIUS, PLAYER_RADIUS};
+  const float yOffsets[] = {-PLAYER_EYE_HEIGHT + 0.05f, -0.80f, PLAYER_HEADROOM};
+
+  for (float yOffset : yOffsets) {
+    for (float xOffset : xOffsets) {
+      for (float zOffset : zOffsets) {
+        for (float wOffset : wOffsets) {
+          if (isSolidAt(eyePosition + glm::vec4(xOffset, yOffset, zOffset, wOffset))) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
 glm::vec4 World::findSurfaceSpawn(glm::vec4 preferredPosition) {
   int32_t baseX = (int32_t) std::floor(preferredPosition.x);
   int32_t baseZ = (int32_t) std::floor(preferredPosition.z);
@@ -239,7 +263,7 @@ glm::vec4 World::findSurfaceSpawn(glm::vec4 preferredPosition) {
           for (int32_t y=96; y>=WATER_LEVEL; y--) {
             HyperCubeTypes block = worldSample(x, y, z, w);
             if (block >= HCT_SOLID_START && worldSample(x, y + 1, z, w) == HCT_AIR) {
-              glm::vec4 spawn(x + 0.5f, y + 1.25f, z + 0.5f, w + 0.5f);
+              glm::vec4 spawn(x + 0.5f, y + PLAYER_EYE_HEIGHT + 0.05f, z + 0.5f, w + 0.5f);
               std::cout << "Spawning player at "
                         << spawn.x << ", "
                         << spawn.y << ", "

@@ -602,14 +602,18 @@ int main(int argc, char **argv)
         if (WS.viewAngle > 100.0f) { WS.viewAngle = 100.0f; }
 
         if (length(move) > 0) {
-          glm::vec4 step = normalize(move) * MOVE_SPEED * (float) delta;
+          glm::vec4 fullStep = normalize(move) * MOVE_SPEED * (float) delta;
+          int substeps = (int) (length(fullStep) / 0.20f) + 1;
+          glm::vec4 step = fullStep / (float) substeps;
 
-          for (int axis=0; axis<4; axis++) {
-            glm::vec4 candidate = WS.eye;
-            candidate[axis] += step[axis];
+          for (int substep=0; substep<substeps; substep++) {
+            for (int axis=0; axis<4; axis++) {
+              glm::vec4 candidate = WS.eye;
+              candidate[axis] += step[axis];
 
-            if (!WS.squareWorld || !squareworld->isSolidAt(candidate)) {
-              WS.eye = candidate;
+              if (!WS.squareWorld || !squareworld->collidesWithPlayer(candidate)) {
+                WS.eye = candidate;
+              }
             }
           }
         }

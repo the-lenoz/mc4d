@@ -18,8 +18,10 @@
 #include <glm/glm.hpp>
 
 static const int32_t CHUNK_DIM = 10;
-static const int32_t ACTIVE_CHUNK_RADIUS = 1;
-static const int32_t CHUNKS_PER_AXIS = 2 * ACTIVE_CHUNK_RADIUS + 1;
+static const int32_t ACTIVE_CHUNK_RADIUS_XZ = 2;
+static const int32_t ACTIVE_CHUNK_RADIUS_W = 1;
+static const int32_t ACTIVE_CHUNK_RADIUS_Y = 1;
+static const int32_t CHUNKS_PER_AXIS = 2 * ACTIVE_CHUNK_RADIUS_XZ + 1;
 static const int32_t DIM = CHUNK_DIM * CHUNKS_PER_AXIS;
 static const int32_t WD_X = DIM;
 static const int32_t WD_Y = DIM;
@@ -57,6 +59,7 @@ public:
   bool loadAround(glm::vec4 position);
   bool updateAround(glm::vec4 position);
   bool isSolidAt(glm::vec4 position);
+  bool collidesWithPlayer(glm::vec4 eyePosition);
   glm::vec4 findSurfaceSpawn(glm::vec4 preferredPosition);
 
   void draw();
