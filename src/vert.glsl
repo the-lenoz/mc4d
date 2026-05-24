@@ -16,7 +16,7 @@ uniform float recipTanViewAngle;
 uniform mat4 projMat3D;
 
 // The points in space (and the # of them)
-uniform samplerBuffer hypercube;
+uniform sampler2D hypercube;
 uniform float hcCount;
 
 uniform float offset;
@@ -33,7 +33,10 @@ out float vdepth4;
 vec4 projectTo3D()
 {
   // Get the position of the hypercube based on a texture lookup.
-  vec4 realPosition = position + texelFetch(hypercube, gl_InstanceID);
+  ivec2 hypercubeTexSize = textureSize(hypercube, 0);
+  ivec2 hypercubeTexCoord = ivec2(gl_InstanceID % hypercubeTexSize.x,
+                                  gl_InstanceID / hypercubeTexSize.x);
+  vec4 realPosition = position + texelFetch(hypercube, hypercubeTexCoord, 0);
 
   // HACK(michael): Offset such that the world is centered at (0,0,0,0)
   // realPosition -= vec4(7.5, 7.5, 7.5, 7.5);

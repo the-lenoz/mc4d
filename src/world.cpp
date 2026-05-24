@@ -1,21 +1,42 @@
 #include "world.h"
 #include "noise.h"
 
-static inline double noiseSample(glm::dvec4 loc) {
-  double rawSimplex = simplexNoise4D(glm::dvec4(1, 1, 1, 1) + // This is kinda like a seed?
-                                     (loc / glm::dvec4(WORLD_DIM)));
+#include <cmath>
 
-  return rawSimplex + loc.y/WORLD_DIM.y;
+static const double WORLD_NOISE_SCALE = 40.0;
+static const int32_t WATER_LEVEL = 0;
+
+static inline double noiseSample(glm::dvec4 loc) {
+  double rawSimplex = simplexNoise4D(glm::dvec4(1, 1, 1, 1) +
+                                     (loc / glm::dvec4(WORLD_NOISE_SCALE)));
+
+  return rawSimplex + loc.y / WORLD_NOISE_SCALE;
+}
+
+glm::ivec4 World::chunkForPosition(glm::vec4 position) {
+  return glm::ivec4((int32_t) std::floor(position.x / CHUNK_DIM),
+                    (int32_t) std::floor(position.y / CHUNK_DIM),
+                    (int32_t) std::floor(position.z / CHUNK_DIM),
+                    (int32_t) std::floor(position.w / CHUNK_DIM));
 }
 
 HyperCubeTypes World::worldSample(int32_t x, int32_t y, int32_t z, int32_t w) {
-  if (x < 0 || y < 0 || z < 0 || w < 0) {
-    return HCT_AIR;// TONE;
-  } else if (x >= WD_X || y >= WD_Y || z >= WD_Z || w >= WD_W) {
-    return HCT_AIR;
-  } else {
-    return hypercubes[x][y][z][w];
+  bool solid = noiseSample(glm::dvec4(x, y, z, w)) < 0.5;
+
+  if (solid) {
+    bool solidAbove = noiseSample(glm::dvec4(x, y + 1, z, w)) < 0.5;
+    if (!solidAbove) {
+      return y >= WATER_LEVEL ? HCT_GRASS : HCT_SAND;
+    }
+
+    return HCT_STONE;
   }
+
+  if (y < WATER_LEVEL) {
+    return HCT_WATER;
+  }
+
+  return HCT_AIR;
 }
 
 void World::generateChunk(int32_t chunkX, int32_t chunkY, int32_t chunkZ, int32_t chunkW) {
@@ -27,82 +48,7 @@ void World::generateChunk(int32_t chunkX, int32_t chunkY, int32_t chunkZ, int32_
           int32_t y = chunkY * CHUNK_DIM + ly;
           int32_t z = chunkZ * CHUNK_DIM + lz;
           int32_t w = chunkW * CHUNK_DIM + lw;
-          double sample = noiseSample(glm::dvec4(x, y, z, w));
-
-          if (sample < 0.5) {
-            hypercubes[x][y][z][w] = HCT_STONE;
-          } else {
-            hypercubes[x][y][z][w] = HCT_AIR;
-          }
-        }
-      }
-    }
-  }
-}
-
-World::World() {
-  std::cout << noiseSample(glm::ivec4(0, 0, 0, 0)) << "\n";
-
-  // Ensure that the perm matrix is initialized
-  initPerm();
-  // Loop over the possible things in the world, chunk by chunk.
-  std::cout << "Starting chunked world generation ("
-            << CHUNKS_PER_AXIS << "^4 chunks, "
-            << CHUNK_DIM << "^4 cells each)" << std::endl;
-  int32_t x, y, z, w;
-  for (int32_t cx=0; cx<CHUNKS_PER_AXIS; cx++) {
-    for (int32_t cy=0; cy<CHUNKS_PER_AXIS; cy++) {
-      for (int32_t cz=0; cz<CHUNKS_PER_AXIS; cz++) {
-        for (int32_t cw=0; cw<CHUNKS_PER_AXIS; cw++) {
-          generateChunk(cx, cy, cz, cw);
-        }
-      }
-    }
-    std::cout << cx + 1 << "/" << CHUNKS_PER_AXIS << " chunk slabs\n";
-  }
-  std::cout << "Done world generation" << std::endl;
-
-  std::cout << "Growing grass" << std::endl;
-  for (x=0; x<WORLD_DIM.x; x++) {
-    for (y=0; y<WORLD_DIM.y; y++) {
-      for (z=0; z<WORLD_DIM.z; z++) {
-        for (w=0; w<WORLD_DIM.w; w++) {
-          if (worldSample(x, y+1, z, w) == HCT_AIR && hypercubes[x][y][z][w] == HCT_STONE) {
-            if (y >= WORLD_DIM.y / 2) {
-              hypercubes[x][y][z][w] = HCT_GRASS;
-            } else {
-              hypercubes[x][y][z][w] = HCT_SAND;
-            }
-          }
-        }
-      }
-    }
-    std::cout << x << "/" << WORLD_DIM.x << "\n";
-  }
-  std::cout << "Done growing grass" << std::endl;
-
-  std::cout << "Filling ponds" << std::endl;
-  for (x=0; x<WORLD_DIM.x; x++) {
-    for (y=0; y<WORLD_DIM.y / 2; y++) { // Only half filled with water
-      for (z=0; z<WORLD_DIM.z; z++) {
-        for (w=0; w<WORLD_DIM.w; w++) {
-          if (hypercubes[x][y][z][w] == HCT_AIR) {
-            hypercubes[x][y][z][w] = HCT_WATER;
-          }
-        }
-      }
-    }
-    std::cout << x << "/" << WORLD_DIM.x << "\n";
-  }
-  std::cout << "Done filling ponds" << std::endl;
-
-  std::cout << "Starting mesh generation" << std::endl;
-
-  for (x=0; x<WORLD_DIM.x; x++) {
-    for (y=0; y<WORLD_DIM.y; y++) {
-      for (z=0; z<WORLD_DIM.z; z++) {
-        for (w=0; w<WORLD_DIM.w; w++) {
-          HyperCubeTypes hct = hypercubes[x][y][z][w];
+          HyperCubeTypes hct = worldSample(x, y, z, w);
 
 #define SURROUNDED (worldSample(x-1, y, z, w) >= HCT_SOLID_START && \
                     worldSample(x+1, y, z, w) >= HCT_SOLID_START && \
@@ -140,13 +86,59 @@ World::World() {
             std::cerr << "INVALID BLOCK TYPE " << hct << "\n";
             exit(-1);
           }
+
+#undef SURROUNDED
         }
       }
     }
-    std::cout << x << "/" << WORLD_DIM.x << "\n";
   }
-  std::cout << "Done mesh generation" << std::endl;
+}
 
+World::World() : centerChunk(0x7fffffff) {
+  initPerm();
+  updateAround(glm::vec4(0));
+}
+
+bool World::updateAround(glm::vec4 position) {
+  glm::ivec4 newCenterChunk = chunkForPosition(position);
+
+  if (newCenterChunk == centerChunk) {
+    return false;
+  }
+
+  centerChunk = newCenterChunk;
+  stoneLocs.clear();
+  grassLocs.clear();
+  sandLocs.clear();
+  waterLocs.clear();
+
+  std::cout << "Generating chunks around "
+            << centerChunk.x << ", "
+            << centerChunk.y << ", "
+            << centerChunk.z << ", "
+            << centerChunk.w << std::endl;
+
+  for (int32_t cx=centerChunk.x - ACTIVE_CHUNK_RADIUS;
+       cx<=centerChunk.x + ACTIVE_CHUNK_RADIUS; cx++) {
+    for (int32_t cy=centerChunk.y - ACTIVE_CHUNK_RADIUS;
+         cy<=centerChunk.y + ACTIVE_CHUNK_RADIUS; cy++) {
+      for (int32_t cz=centerChunk.z - ACTIVE_CHUNK_RADIUS;
+           cz<=centerChunk.z + ACTIVE_CHUNK_RADIUS; cz++) {
+        for (int32_t cw=centerChunk.w - ACTIVE_CHUNK_RADIUS;
+             cw<=centerChunk.w + ACTIVE_CHUNK_RADIUS; cw++) {
+          generateChunk(cx, cy, cz, cw);
+        }
+      }
+    }
+  }
+
+  std::cout << "Active tesseracts: "
+            << "grass=" << grassLocs.size()
+            << ", sand=" << sandLocs.size()
+            << ", stone=" << stoneLocs.size()
+            << ", water=" << waterLocs.size() << std::endl;
+
+  return true;
 }
 
 void World::draw() {

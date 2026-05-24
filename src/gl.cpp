@@ -3,11 +3,10 @@
 // Report any errors. Handled mostly by the GL_ERR_CHK macro
 void glErrChk(const char *where) {
   const char *errStr;
-  GLenum errCode = glGetError();
+  GLenum errCode;
 
+  while ((errCode = glGetError()) != GL_NO_ERROR) {
   switch (errCode) {
-  case GL_NO_ERROR:
-    return;
   case GL_INVALID_ENUM:
     errStr = "Invalid Enum"; break;
   case GL_INVALID_VALUE:
@@ -27,6 +26,7 @@ void glErrChk(const char *where) {
   }
 
   std::cerr << "OpenGL Error(" << where << "): " << errStr << std::endl;
+  }
 }
 
 // This is a really simple FPS thing from http://r3dux.org/2012/07/a-simple-glfw-fps-counter/

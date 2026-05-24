@@ -615,6 +615,13 @@ int main(int argc, char **argv)
       }
     }
 
+    if (squareworld->updateAround(WS.eye)) {
+      squareGrassBlock.update(&squareworld->grassLocs);
+      squareSandBlock.update(&squareworld->sandLocs);
+      squareStoneBlock.update(&squareworld->stoneLocs);
+      squareWaterBlock.update(&squareworld->waterLocs);
+    }
+
     // Calculate projecton stuff
     glm::mat4 worldToEyeMat4D = calcWorldToEyeMat4D(WS.up, WS.over, WS.forward);
     float invTanViewAngle = calcInvTanViewAngle(WS.viewAngle);
@@ -683,7 +690,7 @@ int main(int argc, char **argv)
       glUniform4fv(eyeLoc, 1, glm::value_ptr(WS.eye)); GL_ERR_CHK;
       glUniform3fv(eyePos3Loc, 1, glm::value_ptr(eyePos3)); GL_ERR_CHK;
       glUniform1f(recipTanViewAngleLoc, invTanViewAngle); GL_ERR_CHK;
-      glUniform1f(offsetLoc, WS.squareWorld ? ((float) WORLD_DIM.x - 1.0f) / 2.0f
+      glUniform1f(offsetLoc, WS.squareWorld ? 0.0f
                                            : ((float) ROUNDWORLD_DIM.x - 1.0f) / 2.0f); GL_ERR_CHK;
       glUniformMatrix4fv(worldToEyeMat4DLoc, 1, GL_FALSE, glm::value_ptr(worldToEyeMat4D)); GL_ERR_CHK;
       glUniformMatrix4fv(projMat3DLoc, 1, GL_FALSE, glm::value_ptr(projMat3D)); GL_ERR_CHK;
