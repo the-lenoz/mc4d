@@ -16,6 +16,7 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/rotate_vector.hpp>
 
+#include <cstdio>
 #include <stdlib.h>
 #include <iostream>
 #include <memory>
@@ -184,6 +185,36 @@ static void updateFlyCameraFromMouse(GLFWwindow *window)
   updateFlyCameraBasis();
 }
 
+static const char *cameraDirectionName()
+{
+  double angle = fmod(WS.yaw, 2 * M_PI);
+  if (angle < 0) { angle += 2 * M_PI; }
+
+  if (angle < M_PI / 4 || angle >= 7 * M_PI / 4) { return "+X east"; }
+  if (angle < 3 * M_PI / 4) { return "+Z south"; }
+  if (angle < 5 * M_PI / 4) { return "-X west"; }
+  return "-Z north";
+}
+
+static void updateWindowHud(GLFWwindow *window, double now)
+{
+  static double lastUpdate = -1.0;
+
+  if (lastUpdate >= 0.0 && now - lastUpdate < 0.1) {
+    return;
+  }
+
+  lastUpdate = now;
+  char title[256];
+  std::snprintf(title, sizeof(title),
+                "mc4d | pos %.1f %.1f %.1f %.1f | dir %s | yaw %.0f pitch %.0f",
+                WS.eye.x, WS.eye.y, WS.eye.z, WS.eye.w,
+                cameraDirectionName(),
+                WS.yaw * 180.0 / M_PI,
+                WS.pitch * 180.0 / M_PI);
+  glfwSetWindowTitle(window, title);
+}
+
 // Framebuffer generation code adapted from example code.
 // https://www.opengl.org/wiki/Framebuffer_Object_Examples#Color_texture.2C_Depth_texture
 static void generateFrameBuffer(GLuint &color_tex, GLuint &depth_tex, GLuint &fb, int width, int height, bool genDepth)
@@ -310,6 +341,8 @@ int main(int argc, char **argv)
   // The world is heap allocated because otherwise it will blow out the stack
   std::unique_ptr<World> squareworld(new World());
   std::unique_ptr<RoundWorld> roundworld(new RoundWorld());
+  glm::vec4 playerSpawn = squareworld->findSurfaceSpawn(glm::vec4(0, 0, 0, 0));
+  squareworld->loadAround(playerSpawn);
 
   View view;
 
@@ -426,7 +459,7 @@ int main(int argc, char **argv)
   WS.viewAngle = 45;
   WS.up = glm::vec4(0, 1, 0, 0);
   WS.over = glm::vec4(0, 0, 1, 0);
-  WS.eye = glm::vec4(-32, 0, 0, 0);
+  WS.eye = playerSpawn;
   WS.forward = normalize(glm::vec4(1, 0, 0, 0)); // normalize(-WS.eye);
   WS.rotXY = 0;
   WS.rotXZ = 0;
@@ -569,7 +602,16 @@ int main(int argc, char **argv)
         if (WS.viewAngle > 100.0f) { WS.viewAngle = 100.0f; }
 
         if (length(move) > 0) {
-          WS.eye += normalize(move) * MOVE_SPEED * (float) delta;
+          glm::vec4 step = normalize(move) * MOVE_SPEED * (float) delta;
+
+          for (int axis=0; axis<4; axis++) {
+            glm::vec4 candidate = WS.eye;
+            candidate[axis] += step[axis];
+
+            if (!WS.squareWorld || !squareworld->isSolidAt(candidate)) {
+              WS.eye = candidate;
+            }
+          }
         }
       } else {
 
@@ -787,6 +829,7 @@ int main(int argc, char **argv)
 
     GL_ERR_CHK;
     calcFPS();
+    updateWindowHud(window, thisTime);
   }
 
   // Exit the program

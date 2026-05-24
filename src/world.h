@@ -13,6 +13,7 @@
 
 #include "gl.h"
 
+#include <future>
 #include <vector>
 #include <glm/glm.hpp>
 
@@ -30,11 +31,22 @@ class World {
   GLuint VAO;
   GLuint VBO;
 
-  glm::ivec4 centerChunk;
+  struct WorldData {
+    std::vector<glm::vec4> stoneLocs;
+    std::vector<glm::vec4> grassLocs;
+    std::vector<glm::vec4> sandLocs;
+    std::vector<glm::vec4> waterLocs;
+  };
 
-  void generateChunk(int32_t chunkX, int32_t chunkY, int32_t chunkZ, int32_t chunkW);
-  HyperCubeTypes worldSample(int32_t x, int32_t y, int32_t z, int32_t w);
-  glm::ivec4 chunkForPosition(glm::vec4 position);
+  glm::ivec4 centerChunk;
+  glm::ivec4 pendingCenterChunk;
+  std::future<WorldData> pendingData;
+
+  static void generateChunk(WorldData &data, int32_t chunkX, int32_t chunkY, int32_t chunkZ, int32_t chunkW);
+  static WorldData generateAround(glm::ivec4 centerChunk);
+  static HyperCubeTypes worldSample(int32_t x, int32_t y, int32_t z, int32_t w);
+  static glm::ivec4 chunkForPosition(glm::vec4 position);
+  void applyData(WorldData data);
 public:
   std::vector<glm::vec4> stoneLocs;
   std::vector<glm::vec4> grassLocs;
@@ -42,7 +54,10 @@ public:
   std::vector<glm::vec4> waterLocs;
 
   World();
+  bool loadAround(glm::vec4 position);
   bool updateAround(glm::vec4 position);
+  bool isSolidAt(glm::vec4 position);
+  glm::vec4 findSurfaceSpawn(glm::vec4 preferredPosition);
 
   void draw();
 };

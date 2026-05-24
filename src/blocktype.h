@@ -34,7 +34,7 @@ struct BlockType {
 
   void update(std::vector<glm::vec4> *pts) {
     count = pts->size();
-    std::cout << "Block type has " << count << " tesseracts\n";
+    std::cout << "Block type has " << count << " tesseracts" << std::endl;
 
     size_t uploadCount = count > 0 ? count : 1;
     int width = uploadCount < 1024 ? (int) uploadCount : 1024;
