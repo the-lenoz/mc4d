@@ -71,7 +71,9 @@ enum HyperCubeTypes {
 
   HCT_STONE,
   HCT_GRASS,
-  HCT_SAND
+  HCT_SAND,
+  HCT_WOOD,
+  HCT_LEAVES
 } __attribute__((packed));
 
 static_assert(sizeof(HyperCubeTypes) == sizeof(uint8_t),

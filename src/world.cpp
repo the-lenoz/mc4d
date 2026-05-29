@@ -9,7 +9,25 @@
 static const int32_t WATER_LEVEL = 0;
 static const float PLAYER_RADIUS = 0.35f;
 static const float PLAYER_EYE_HEIGHT = 1.62f;
-static const float PLAYER_HEADROOM = 0.15f;
+static const float PLAYER_HEIGHT = 2.0f;
+static const int32_t TREE_SPACING = 12;
+static const int32_t WOOD_TESSERACT_SPACING = 32;
+static const int32_t WOOD_TESSERACT_RADIUS = 3;
+
+struct TreeBase {
+  int32_t x;
+  int32_t z;
+  int32_t w;
+  bool enabled;
+};
+
+struct WoodTesseractBase {
+  int32_t x;
+  int32_t y;
+  int32_t z;
+  int32_t w;
+  bool enabled;
+};
 
 static inline double clamp01(double value) {
   if (value < 0.0) { return 0.0; }
@@ -21,25 +39,164 @@ static inline double normalizedNoise(glm::dvec4 loc) {
   return clamp01((simplexNoise4D(loc) + 1.0) * 0.5);
 }
 
-static inline double mountainHeight(int32_t x, int32_t z, int32_t w) {
+static inline double plainsHeight(int32_t x, int32_t z, int32_t w) {
   glm::dvec4 pos(x, z, w, 0);
-  double continent = normalizedNoise(glm::dvec4(11, 17, 23, 31) + pos / 180.0);
-  double broad = normalizedNoise(glm::dvec4(37, 41, 43, 47) + pos / 80.0);
-  double detail = normalizedNoise(glm::dvec4(53, 59, 61, 67) + pos / 28.0);
-  double ridgedRaw = simplexNoise4D(glm::dvec4(71, 73, 79, 83) + pos / 55.0);
-  double ridges = 1.0 - std::abs(ridgedRaw);
+  double broad = normalizedNoise(glm::dvec4(11, 17, 23, 31) + pos / 180.0);
+  double rolling = normalizedNoise(glm::dvec4(37, 41, 43, 47) + pos / 70.0);
+  double detail = normalizedNoise(glm::dvec4(53, 59, 61, 67) + pos / 32.0);
 
-  ridges = ridges * ridges;
+  return 3.0 +
+         3.0 * broad +
+         2.0 * rolling +
+         1.0 * detail;
+}
 
-  return -4.0 +
-         10.0 * continent +
-         18.0 * broad +
-         34.0 * ridges +
-         6.0 * detail;
+static inline int32_t floorDiv(int32_t value, int32_t divisor) {
+  return value >= 0 ? value / divisor : -((-value + divisor - 1) / divisor);
+}
+
+static inline uint32_t hashCoords(int32_t x, int32_t z, int32_t w) {
+  uint32_t h = 2166136261u;
+  h = (h ^ (uint32_t) x) * 16777619u;
+  h = (h ^ (uint32_t) z) * 16777619u;
+  h = (h ^ (uint32_t) w) * 16777619u;
+  h ^= h >> 16;
+  h *= 2246822519u;
+  h ^= h >> 13;
+  h *= 3266489917u;
+  h ^= h >> 16;
+  return h;
+}
+
+static inline int32_t terrainHeight(int32_t x, int32_t z, int32_t w) {
+  return (int32_t) std::floor(plainsHeight(x, z, w));
+}
+
+static inline TreeBase treeBaseForCell(int32_t cellX, int32_t cellZ, int32_t cellW) {
+  uint32_t h = hashCoords(cellX, cellZ, cellW);
+  if (h % 3 != 0) {
+    return TreeBase{0, 0, 0, false};
+  }
+
+  int32_t x = cellX * TREE_SPACING;
+  int32_t z = cellZ * TREE_SPACING;
+  int32_t w = cellW * TREE_SPACING;
+
+  if (terrainHeight(x, z, w) <= WATER_LEVEL + 1) {
+    return TreeBase{0, 0, 0, false};
+  }
+
+  return TreeBase{x, z, w, true};
+}
+
+static inline WoodTesseractBase woodTesseractBaseForCell(int32_t cellX, int32_t cellZ, int32_t cellW) {
+  if (std::abs(cellX + cellZ + cellW) % 2 != 0) {
+    return WoodTesseractBase{0, 0, 0, 0, false};
+  }
+
+  int32_t x = cellX * WOOD_TESSERACT_SPACING + WOOD_TESSERACT_SPACING / 2;
+  int32_t z = cellZ * WOOD_TESSERACT_SPACING + WOOD_TESSERACT_SPACING / 2;
+  int32_t w = cellW * WOOD_TESSERACT_SPACING + WOOD_TESSERACT_SPACING / 2;
+  int32_t y = terrainHeight(x, z, w);
+
+  if (y <= WATER_LEVEL + 1) {
+    return WoodTesseractBase{0, 0, 0, 0, false};
+  }
+
+  return WoodTesseractBase{x, y, z, w, true};
+}
+
+static inline WoodTesseractBase nearestWoodTesseractBase(int32_t x, int32_t z, int32_t w) {
+  int32_t cellX = floorDiv(x, WOOD_TESSERACT_SPACING);
+  int32_t cellZ = floorDiv(z, WOOD_TESSERACT_SPACING);
+  int32_t cellW = floorDiv(w, WOOD_TESSERACT_SPACING);
+  return woodTesseractBaseForCell(cellX, cellZ, cellW);
+}
+
+static inline bool isWoodTesseractDoor(WoodTesseractBase base, int32_t x, int32_t y, int32_t z, int32_t w) {
+  int32_t minZ = base.z - WOOD_TESSERACT_RADIUS;
+  return z == minZ &&
+         x == base.x &&
+         w == base.w &&
+         y >= base.y + 1 &&
+         y <= base.y + 2;
+}
+
+static inline bool isInsideWoodTesseractVolume(WoodTesseractBase base, int32_t x, int32_t y, int32_t z, int32_t w) {
+  return base.enabled &&
+         x >= base.x - WOOD_TESSERACT_RADIUS && x <= base.x + WOOD_TESSERACT_RADIUS &&
+         y >= base.y && y <= base.y + 2 * WOOD_TESSERACT_RADIUS &&
+         z >= base.z - WOOD_TESSERACT_RADIUS && z <= base.z + WOOD_TESSERACT_RADIUS &&
+         w >= base.w - WOOD_TESSERACT_RADIUS && w <= base.w + WOOD_TESSERACT_RADIUS;
+}
+
+static inline HyperCubeTypes woodTesseractSample(int32_t x, int32_t y, int32_t z, int32_t w) {
+  WoodTesseractBase base = nearestWoodTesseractBase(x, z, w);
+  if (!isInsideWoodTesseractVolume(base, x, y, z, w)) {
+    return HCT_AIR;
+  }
+
+  int32_t minX = base.x - WOOD_TESSERACT_RADIUS;
+  int32_t maxX = base.x + WOOD_TESSERACT_RADIUS;
+  int32_t minY = base.y;
+  int32_t maxY = base.y + 2 * WOOD_TESSERACT_RADIUS;
+  int32_t minZ = base.z - WOOD_TESSERACT_RADIUS;
+  int32_t maxZ = base.z + WOOD_TESSERACT_RADIUS;
+  int32_t minW = base.w - WOOD_TESSERACT_RADIUS;
+  int32_t maxW = base.w + WOOD_TESSERACT_RADIUS;
+
+  bool shell = x == minX || x == maxX ||
+               y == minY || y == maxY ||
+               z == minZ || z == maxZ ||
+               w == minW || w == maxW;
+  if (!shell || isWoodTesseractDoor(base, x, y, z, w)) {
+    return HCT_AIR;
+  }
+
+  return HCT_WOOD;
+}
+
+static inline bool woodTesseractClaimsAir(int32_t x, int32_t y, int32_t z, int32_t w) {
+  WoodTesseractBase base = nearestWoodTesseractBase(x, z, w);
+  if (!isInsideWoodTesseractVolume(base, x, y, z, w)) {
+    return false;
+  }
+
+  return woodTesseractSample(x, y, z, w) == HCT_AIR;
+}
+
+static inline HyperCubeTypes treeSample(int32_t x, int32_t y, int32_t z, int32_t w) {
+  if (y < WATER_LEVEL + 2 || y > 20) {
+    return HCT_AIR;
+  }
+
+  int32_t cellX = floorDiv(x + TREE_SPACING / 2, TREE_SPACING);
+  int32_t cellZ = floorDiv(z + TREE_SPACING / 2, TREE_SPACING);
+  int32_t cellW = floorDiv(w + TREE_SPACING / 2, TREE_SPACING);
+  TreeBase base = treeBaseForCell(cellX, cellZ, cellW);
+  if (!base.enabled) {
+    return HCT_AIR;
+  }
+
+  int32_t baseY = terrainHeight(base.x, base.z, base.w);
+  if (x == base.x && z == base.z && w == base.w &&
+      y >= baseY + 1 && y <= baseY + 4) {
+    return HCT_WOOD;
+  }
+
+  int32_t dx = std::abs(x - base.x);
+  int32_t dy = std::abs(y - (baseY + 5));
+  int32_t dz = std::abs(z - base.z);
+  int32_t dw = std::abs(w - base.w);
+  if (dy <= 1 && dx <= 2 && dz <= 2 && dw <= 2 && dx + dy + dz + dw <= 4) {
+    return HCT_LEAVES;
+  }
+
+  return HCT_AIR;
 }
 
 static inline bool isTerrainSolid(int32_t x, int32_t y, int32_t z, int32_t w) {
-  return y <= (int32_t) std::floor(mountainHeight(x, z, w));
+  return y <= terrainHeight(x, z, w);
 }
 
 static inline bool isSurface(int32_t x, int32_t y, int32_t z, int32_t w) {
@@ -54,6 +211,19 @@ glm::ivec4 World::chunkForPosition(glm::vec4 position) {
 }
 
 HyperCubeTypes World::worldSample(int32_t x, int32_t y, int32_t z, int32_t w) {
+  HyperCubeTypes woodTesseractBlock = woodTesseractSample(x, y, z, w);
+  if (woodTesseractBlock != HCT_AIR) {
+    return woodTesseractBlock;
+  }
+  if (woodTesseractClaimsAir(x, y, z, w)) {
+    return HCT_AIR;
+  }
+
+  HyperCubeTypes treeBlock = treeSample(x, y, z, w);
+  if (treeBlock != HCT_AIR) {
+    return treeBlock;
+  }
+
   if (isTerrainSolid(x, y, z, w)) {
     if (isSurface(x, y, z, w)) {
       if (y <= WATER_LEVEL + 1) { return HCT_SAND; }
@@ -109,6 +279,16 @@ void World::generateChunk(WorldData &data, int32_t chunkX, int32_t chunkY, int32
               data.stoneLocs.push_back(glm::vec4(x, y, z, w));
             }
             break;
+          case HCT_WOOD:
+            if (!SURROUNDED) {
+              data.woodLocs.push_back(glm::vec4(x, y, z, w));
+            }
+            break;
+          case HCT_LEAVES:
+            if (!SURROUNDED) {
+              data.leavesLocs.push_back(glm::vec4(x, y, z, w));
+            }
+            break;
           case HCT_WATER:
             if (!SURROUNDED) {
               data.waterLocs.push_back(glm::vec4(x, y, z, w));
@@ -157,6 +337,8 @@ World::WorldData World::generateAround(glm::ivec4 centerChunk) {
             << "grass=" << data.grassLocs.size()
             << ", sand=" << data.sandLocs.size()
             << ", stone=" << data.stoneLocs.size()
+            << ", wood=" << data.woodLocs.size()
+            << ", leaves=" << data.leavesLocs.size()
             << ", water=" << data.waterLocs.size() << std::endl;
 
   return data;
@@ -167,6 +349,8 @@ void World::applyData(WorldData data) {
   grassLocs = std::move(data.grassLocs);
   sandLocs = std::move(data.sandLocs);
   waterLocs = std::move(data.waterLocs);
+  woodLocs = std::move(data.woodLocs);
+  leavesLocs = std::move(data.leavesLocs);
 }
 
 bool World::updateAround(glm::vec4 position) {
@@ -216,25 +400,37 @@ bool World::loadAround(glm::vec4 position) {
 }
 
 bool World::isSolidAt(glm::vec4 position) {
-  return worldSample((int32_t) std::floor(position.x),
-                     (int32_t) std::floor(position.y),
-                     (int32_t) std::floor(position.z),
-                     (int32_t) std::floor(position.w)) >= HCT_SOLID_START;
+  return worldSample((int32_t) std::floor(position.x + 0.5f),
+                     (int32_t) std::floor(position.y + 0.5f),
+                     (int32_t) std::floor(position.z + 0.5f),
+                     (int32_t) std::floor(position.w + 0.5f)) >= HCT_SOLID_START;
 }
 
 bool World::collidesWithPlayer(glm::vec4 eyePosition) {
-  const float xOffsets[] = {-PLAYER_RADIUS, PLAYER_RADIUS};
-  const float zOffsets[] = {-PLAYER_RADIUS, PLAYER_RADIUS};
-  const float wOffsets[] = {-PLAYER_RADIUS, PLAYER_RADIUS};
-  const float yOffsets[] = {-PLAYER_EYE_HEIGHT + 0.05f, -0.80f, PLAYER_HEADROOM};
+  const float EPSILON = 0.001f;
+  float minX = eyePosition.x - PLAYER_RADIUS;
+  float maxX = eyePosition.x + PLAYER_RADIUS;
+  float minY = eyePosition.y - PLAYER_EYE_HEIGHT;
+  float maxY = minY + PLAYER_HEIGHT;
+  float minZ = eyePosition.z - PLAYER_RADIUS;
+  float maxZ = eyePosition.z + PLAYER_RADIUS;
+  float minW = eyePosition.w - PLAYER_RADIUS;
+  float maxW = eyePosition.w + PLAYER_RADIUS;
 
-  for (float yOffset : yOffsets) {
-    for (float xOffset : xOffsets) {
-      for (float zOffset : zOffsets) {
-        for (float wOffset : wOffsets) {
-          if (isSolidAt(eyePosition + glm::vec4(xOffset, yOffset, zOffset, wOffset))) {
-            return true;
-          }
+  int32_t blockMinX = (int32_t) std::ceil(minX - 0.5f + EPSILON);
+  int32_t blockMaxX = (int32_t) std::floor(maxX + 0.5f - EPSILON);
+  int32_t blockMinY = (int32_t) std::ceil(minY - 0.5f + EPSILON);
+  int32_t blockMaxY = (int32_t) std::floor(maxY + 0.5f - EPSILON);
+  int32_t blockMinZ = (int32_t) std::ceil(minZ - 0.5f + EPSILON);
+  int32_t blockMaxZ = (int32_t) std::floor(maxZ + 0.5f - EPSILON);
+  int32_t blockMinW = (int32_t) std::ceil(minW - 0.5f + EPSILON);
+  int32_t blockMaxW = (int32_t) std::floor(maxW + 0.5f - EPSILON);
+
+  for (int32_t x=blockMinX; x<=blockMaxX; x++) {
+    for (int32_t y=blockMinY; y<=blockMaxY; y++) {
+      for (int32_t z=blockMinZ; z<=blockMaxZ; z++) {
+        for (int32_t w=blockMinW; w<=blockMaxW; w++) {
+          if (worldSample(x, y, z, w) >= HCT_SOLID_START) { return true; }
         }
       }
     }
@@ -261,9 +457,21 @@ glm::vec4 World::findSurfaceSpawn(glm::vec4 preferredPosition) {
           int32_t w = baseW + dw;
 
           for (int32_t y=96; y>=WATER_LEVEL; y--) {
-            HyperCubeTypes block = worldSample(x, y, z, w);
-            if (block >= HCT_SOLID_START && worldSample(x, y + 1, z, w) == HCT_AIR) {
-              glm::vec4 spawn(x + 0.5f, y + PLAYER_EYE_HEIGHT + 0.05f, z + 0.5f, w + 0.5f);
+            if (isTerrainSolid(x, y, z, w) && !isTerrainSolid(x, y + 1, z, w)) {
+              glm::vec4 landed(x, y + 0.5f + PLAYER_EYE_HEIGHT, z, w);
+              glm::vec4 spawn = landed + glm::vec4(0, 4.0f, 0, 0);
+              bool clearFallPath = true;
+              for (float eyeY=landed.y; eyeY<=spawn.y; eyeY += 0.25f) {
+                if (collidesWithPlayer(glm::vec4(spawn.x, eyeY, spawn.z, spawn.w))) {
+                  clearFallPath = false;
+                  break;
+                }
+              }
+
+              if (!clearFallPath) {
+                continue;
+              }
+
               std::cout << "Spawning player at "
                         << spawn.x << ", "
                         << spawn.y << ", "

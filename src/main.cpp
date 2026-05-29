@@ -38,7 +38,7 @@ static struct WorldState {
   double rot3X, rot3Y;
 
   // Mouse-look camera angles for free-fly mode.
-  double yaw, pitch;
+  double yaw, pitch, hyperYaw;
   double lastMouseX, lastMouseY;
   bool mouseLookInitialized;
 
@@ -54,6 +54,12 @@ static struct WorldState {
 
   // Free-fly navigation mode
   bool flyMode;
+
+  // Walk-mode physics
+  glm::vec4 velocity;
+  double lastSpacePressTime;
+  bool spaceDoubleTapPending;
+  bool spaceWasHeld;
 
   // Which version of the world to display (square or round)
   bool squareWorld;
@@ -104,6 +110,20 @@ static void keyCallback(GLFWwindow* window, int key,
                        WS.flyMode ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
       break;
 
+    case GLFW_KEY_G:
+      WS.hyperYaw = 0;
+      break;
+
+    case GLFW_KEY_SPACE: {
+      double now = glfwGetTime();
+      if (WS.lastSpacePressTime > 0 && now - WS.lastSpacePressTime < 0.3) {
+        WS.spaceDoubleTapPending = true;
+        WS.lastSpacePressTime = 0;
+      } else {
+        WS.lastSpacePressTime = now;
+      }
+    } break;
+
     case GLFW_KEY_0:
       WS.rotXY = 0;
       WS.rotXZ = 0;
@@ -149,7 +169,10 @@ static void resizeCallback(GLFWwindow *, int width, int height)
 static void updateFlyCameraBasis()
 {
   const glm::vec4 worldUp(0, 1, 0, 0);
-  glm::vec4 horizontalForward(cosf(WS.yaw), 0, sinf(WS.yaw), 0);
+  glm::vec4 xzForward(cosf(WS.yaw), 0, sinf(WS.yaw), 0);
+  glm::vec4 wAxis(0, 0, 0, 1);
+  glm::vec4 horizontalForward = normalize((float) cos(WS.hyperYaw) * xzForward +
+                                          (float) sin(WS.hyperYaw) * wAxis);
 
   WS.up = worldUp;
   WS.over = normalize(glm::vec4(-sinf(WS.yaw), 0, cosf(WS.yaw), 0));
@@ -185,6 +208,41 @@ static void updateFlyCameraFromMouse(GLFWwindow *window)
   updateFlyCameraBasis();
 }
 
+static void update4DLookControls(GLFWwindow *window, double delta)
+{
+  const double HYPER_LOOK_SPEED = 1.4;
+  const double MAX_HYPER_YAW = 1.35;
+  bool changed = false;
+
+  if (glfwGetKey(window, GLFW_KEY_R)) {
+    WS.hyperYaw += HYPER_LOOK_SPEED * delta;
+    changed = true;
+  }
+  if (glfwGetKey(window, GLFW_KEY_F)) {
+    WS.hyperYaw -= HYPER_LOOK_SPEED * delta;
+    changed = true;
+  }
+  if (glfwGetKey(window, GLFW_KEY_G)) {
+    WS.hyperYaw = 0;
+    changed = true;
+  }
+
+  if (WS.hyperYaw > MAX_HYPER_YAW) { WS.hyperYaw = MAX_HYPER_YAW; }
+  if (WS.hyperYaw < -MAX_HYPER_YAW) { WS.hyperYaw = -MAX_HYPER_YAW; }
+
+  if (changed) {
+    updateFlyCameraBasis();
+  }
+}
+
+static glm::vec4 cameraHorizontalForward()
+{
+  glm::vec4 xzForward(cosf(WS.yaw), 0, sinf(WS.yaw), 0);
+  glm::vec4 wAxis(0, 0, 0, 1);
+  return normalize((float) cos(WS.hyperYaw) * xzForward +
+                   (float) sin(WS.hyperYaw) * wAxis);
+}
+
 static const char *cameraDirectionName()
 {
   double angle = fmod(WS.yaw, 2 * M_PI);
@@ -207,11 +265,12 @@ static void updateWindowHud(GLFWwindow *window, double now)
   lastUpdate = now;
   char title[256];
   std::snprintf(title, sizeof(title),
-                "mc4d | pos %.1f %.1f %.1f %.1f | dir %s | yaw %.0f pitch %.0f",
+                "mc4d | pos %.1f %.1f %.1f %.1f | dir %s | yaw %.0f pitch %.0f wlook %.0f",
                 WS.eye.x, WS.eye.y, WS.eye.z, WS.eye.w,
                 cameraDirectionName(),
                 WS.yaw * 180.0 / M_PI,
-                WS.pitch * 180.0 / M_PI);
+                WS.pitch * 180.0 / M_PI,
+                WS.hyperYaw * 180.0 / M_PI);
   glfwSetWindowTitle(window, title);
 }
 
@@ -356,6 +415,8 @@ int main(int argc, char **argv)
   BlockType squareSandBlock(&squareworld->sandLocs, 3);
   BlockType squareStoneBlock(&squareworld->stoneLocs, 0);
   BlockType squareWaterBlock(&squareworld->waterLocs, 2);
+  BlockType squareWoodBlock(&squareworld->woodLocs, 6);
+  BlockType squareLeavesBlock(&squareworld->leavesLocs, 7);
 
   BlockType roundGrassBlock(&roundworld->grassLocs, 4);
   BlockType roundSandBlock(&roundworld->sandLocs, 3);
@@ -463,14 +524,16 @@ int main(int argc, char **argv)
   WS.forward = normalize(glm::vec4(1, 0, 0, 0)); // normalize(-WS.eye);
   WS.rotXY = 0;
   WS.rotXZ = 0;
-  WS.rotXW = 0;
-  WS.rotYZ = 0;
-  WS.rotYW = 0;
-  WS.rotZW = 0;
+      WS.rotXW = 0;
+      WS.rotYZ = 0;
+      WS.rotYW = 0;
+      WS.rotZW = 0;
+      WS.hyperYaw = 0;
   WS.rot3X = 0;
   WS.rot3Y = 0;
   WS.yaw = 0;
   WS.pitch = 0;
+  WS.hyperYaw = 0;
   WS.lastMouseX = 0;
   WS.lastMouseY = 0;
   WS.mouseLookInitialized = false;
@@ -488,7 +551,11 @@ int main(int argc, char **argv)
   WS.displayWireframe = false;
   WS.hideWater = true;
   WS.squareWorld = true;
-  WS.flyMode = true;
+  WS.flyMode = false;
+  WS.velocity = glm::vec4(0);
+  WS.lastSpacePressTime = 0;
+  WS.spaceDoubleTapPending = false;
+  WS.spaceWasHeld = false;
   updateFlyCameraBasis();
 
   // Get the location of the uniforms on the GPU
@@ -570,14 +637,25 @@ int main(int argc, char **argv)
 
     // World state updating */
     {
-      const float SPEED = 1.00;
+      // Handle double-space toggle
+      if (WS.spaceDoubleTapPending) {
+        WS.flyMode = !WS.flyMode;
+        WS.mouseLookInitialized = false;
+        glfwSetInputMode(window, GLFW_CURSOR,
+                         WS.flyMode ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+        WS.spaceDoubleTapPending = false;
+      }
+
+      // Track space key across modes for edge detection
+      bool spaceHeld = glfwGetKey(window, GLFW_KEY_SPACE) != 0;
 
       if (WS.flyMode) {
         const float MOVE_SPEED = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) ? 24.0f : 8.0f;
 
         updateFlyCameraFromMouse(window);
+        update4DLookControls(window, delta);
 
-        glm::vec4 horizontalForward(cosf(WS.yaw), 0, sinf(WS.yaw), 0);
+        glm::vec4 horizontalForward = cameraHorizontalForward();
         glm::vec4 wAxis(0, 0, 0, 1);
         glm::vec4 move(0);
 
@@ -618,47 +696,88 @@ int main(int argc, char **argv)
           }
         }
       } else {
+        // Walk mode with gravity
+        const float WALK_SPEED = 4.5f;
+        const float SPRINT_MULT = 1.7f;
+        const float GRAVITY_ACCEL = 30.0f;
+        const float JUMP_SPEED = 9.0f;
 
-#define ADJUST(uk, dk, var) if (glfwGetKey(window, GLFW_KEY_##uk)) {  \
-        WS.var += SPEED * delta; \
-      }\
-      if (glfwGetKey(window, GLFW_KEY_##dk)) {\
-        WS.var -= SPEED * delta;\
-      }\
-      if (WS.auto##var) {\
-        WS.var += SPEED * delta;\
+        updateFlyCameraFromMouse(window);
+        update4DLookControls(window, delta);
+
+        glm::vec4 horizontalForward = cameraHorizontalForward();
+        glm::vec4 wAxis(0, 0, 0, 1);
+        glm::vec4 move(0);
+
+        if (glfwGetKey(window, GLFW_KEY_W)) { move += horizontalForward; }
+        if (glfwGetKey(window, GLFW_KEY_S)) { move -= horizontalForward; }
+        if (glfwGetKey(window, GLFW_KEY_D)) { move -= WS.over; }
+        if (glfwGetKey(window, GLFW_KEY_A)) { move += WS.over; }
+        if (glfwGetKey(window, GLFW_KEY_E)) { move += wAxis; }
+        if (glfwGetKey(window, GLFW_KEY_Q)) { move -= wAxis; }
+
+        float moveSpeed = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) ? WALK_SPEED * SPRINT_MULT : WALK_SPEED;
+
+        if (length(move) > 0) {
+          glm::vec4 moveDir = normalize(move);
+          WS.velocity.x = moveDir.x * moveSpeed;
+          WS.velocity.z = moveDir.z * moveSpeed;
+          WS.velocity.w = moveDir.w * moveSpeed;
+        } else {
+          float damping = 1.0f - 15.0f * (float) delta;
+          if (damping < 0) damping = 0;
+          WS.velocity.x *= damping;
+          WS.velocity.z *= damping;
+          WS.velocity.w *= damping;
+        }
+
+        // Ground check
+        bool onGround = WS.velocity.y <= 0 &&
+          WS.squareWorld && squareworld->collidesWithPlayer(WS.eye + glm::vec4(0, -0.05f, 0, 0));
+
+        // Jump (edge-triggered on space press)
+        if (onGround && spaceHeld && !WS.spaceWasHeld) {
+          WS.velocity.y = JUMP_SPEED;
+          onGround = false;
+        }
+
+        // Gravity (only when not on ground)
+        if (!onGround) {
+          WS.velocity.y -= GRAVITY_ACCEL * (float) delta;
+        } else {
+          WS.velocity.y = 0;
+        }
+
+        // Move with collision
+        glm::vec4 fullStep = WS.velocity * (float) delta;
+        int substeps = (int) (glm::length(fullStep) / 0.15f) + 1;
+        glm::vec4 perStep = fullStep / (float) substeps;
+
+        for (int substep=0; substep<substeps; substep++) {
+          for (int axis=0; axis<4; axis++) {
+            if (perStep[axis] == 0) continue;
+            glm::vec4 candidate = WS.eye;
+            candidate[axis] += perStep[axis];
+            if (!WS.squareWorld || !squareworld->collidesWithPlayer(candidate)) {
+              WS.eye = candidate;
+            } else if (axis == 1 && perStep[axis] < 0) {
+              WS.velocity.y = 0;
+            }
+          }
+        }
+
+        const float VIEW_ANGLE_SPEED = 45.0f;
+        if (glfwGetKey(window, GLFW_KEY_RIGHT_BRACKET)) {
+          WS.viewAngle += VIEW_ANGLE_SPEED * delta;
+        }
+        if (glfwGetKey(window, GLFW_KEY_LEFT_BRACKET)) {
+          WS.viewAngle -= VIEW_ANGLE_SPEED * delta;
+        }
+        if (WS.viewAngle < 25.0f) { WS.viewAngle = 25.0f; }
+        if (WS.viewAngle > 100.0f) { WS.viewAngle = 100.0f; }
       }
 
-      // 4-space camera motion
-      ADJUST(Q, A, rotXY);
-      ADJUST(W, S, rotXZ);
-      ADJUST(E, D, rotXW);
-      ADJUST(R, F, rotYZ);
-      ADJUST(T, G, rotYW);
-      ADJUST(Y, H, rotZW);
-
-      // 3-space camera motion
-      ADJUST(DOWN, UP, rot3Y);
-      ADJUST(LEFT, RIGHT, rot3X);
-
-
-      // Limit vertical rotation in 3-space to be within limit rads
-      // the M_PI/16 rads are to prevent glitchiness around 90 degrees
-      double limit = M_PI / 2 - M_PI / 16;
-      if (WS.rot3Y > limit) { WS.rot3Y = limit; }
-      if (WS.rot3Y < -limit) { WS.rot3Y = -limit; }
-
-#undef ADJUST
-
-      const float ZOOM_SPEED = 2.00;
-
-      if (glfwGetKey(window, GLFW_KEY_EQUAL) && WS.zoom < 1) {
-        WS.zoom += ZOOM_SPEED * delta;
-      }
-      if (glfwGetKey(window, GLFW_KEY_MINUS) && WS.zoom > -5) {
-        WS.zoom -= ZOOM_SPEED * delta;
-      }
-      }
+      WS.spaceWasHeld = spaceHeld;
     }
 
     if (squareworld->updateAround(WS.eye)) {
@@ -666,6 +785,8 @@ int main(int argc, char **argv)
       squareSandBlock.update(&squareworld->sandLocs);
       squareStoneBlock.update(&squareworld->stoneLocs);
       squareWaterBlock.update(&squareworld->waterLocs);
+      squareWoodBlock.update(&squareworld->woodLocs);
+      squareLeavesBlock.update(&squareworld->leavesLocs);
     }
 
     // Calculate projecton stuff
@@ -764,6 +885,16 @@ int main(int argc, char **argv)
       stoneBlock->bind(hypercubeLoc, hcCountLoc, hcIndicatorLoc);
       glDrawArraysInstanced(GL_TRIANGLES, 0, vaoSize, stoneBlock->count);
       GL_ERR_CHK;
+
+      if (WS.squareWorld) {
+        squareWoodBlock.bind(hypercubeLoc, hcCountLoc, hcIndicatorLoc);
+        glDrawArraysInstanced(GL_TRIANGLES, 0, vaoSize, squareWoodBlock.count);
+        GL_ERR_CHK;
+
+        squareLeavesBlock.bind(hypercubeLoc, hcCountLoc, hcIndicatorLoc);
+        glDrawArraysInstanced(GL_TRIANGLES, 0, vaoSize, squareLeavesBlock.count);
+        GL_ERR_CHK;
+      }
 
       // Draw the skybox
       sb.draw(projMat3D, eyePos3);

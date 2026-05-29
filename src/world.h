@@ -38,6 +38,8 @@ class World {
     std::vector<glm::vec4> grassLocs;
     std::vector<glm::vec4> sandLocs;
     std::vector<glm::vec4> waterLocs;
+    std::vector<glm::vec4> woodLocs;
+    std::vector<glm::vec4> leavesLocs;
   };
 
   glm::ivec4 centerChunk;
@@ -54,6 +56,8 @@ public:
   std::vector<glm::vec4> grassLocs;
   std::vector<glm::vec4> sandLocs;
   std::vector<glm::vec4> waterLocs;
+  std::vector<glm::vec4> woodLocs;
+  std::vector<glm::vec4> leavesLocs;
 
   World();
   bool loadAround(glm::vec4 position);

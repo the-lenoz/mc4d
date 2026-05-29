@@ -50,5 +50,9 @@ void main()
   } else if (hcIndicator == 5) { // Cloud
     fragColour.rgb += 0.3;
     fragColour.a = 0.4; // Blending factor
+  } else if (hcIndicator == 6) { // Wood
+    fragColour.rgb = mix(fragColour.rgb, vec3(0.42, 0.24, 0.08), 0.75);
+  } else if (hcIndicator == 7) { // Leaves
+    fragColour.rgb = mix(fragColour.rgb, vec3(0.12, 0.48, 0.12), 0.75);
   }
 }
