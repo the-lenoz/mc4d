@@ -52,6 +52,10 @@ static struct WorldState {
   // Display the scene
   bool displayBlocks, displayWireframe, hideWater;
 
+  // 4D slice view mode
+  bool sliceMode;
+  double sliceAngle;
+
   // Free-fly navigation mode
   bool flyMode;
 
@@ -103,6 +107,7 @@ static void keyCallback(GLFWwindow* window, int key,
     case GLFW_KEY_PERIOD: WS.displayBlocks = !WS.displayBlocks; break;
     case GLFW_KEY_SEMICOLON: WS.squareWorld = !WS.squareWorld; break;
     case GLFW_KEY_APOSTROPHE: WS.hideWater = !WS.hideWater; break;
+    case GLFW_KEY_M: WS.sliceMode = !WS.sliceMode; break;
     case GLFW_KEY_TAB:
       WS.flyMode = !WS.flyMode;
       WS.mouseLookInitialized = false;
@@ -111,7 +116,11 @@ static void keyCallback(GLFWwindow* window, int key,
       break;
 
     case GLFW_KEY_G:
-      WS.hyperYaw = 0;
+      if (WS.sliceMode) {
+        WS.sliceAngle = 0;
+      } else {
+        WS.hyperYaw = 0;
+      }
       break;
 
     case GLFW_KEY_SPACE: {
@@ -131,6 +140,7 @@ static void keyCallback(GLFWwindow* window, int key,
       WS.rotYZ = 0;
       WS.rotYW = 0;
       WS.rotZW = 0;
+      WS.sliceAngle = 0;
 
       WS.autorotXY = false;
       WS.autorotXZ = false;
@@ -210,6 +220,10 @@ static void updateFlyCameraFromMouse(GLFWwindow *window)
 
 static void update4DLookControls(GLFWwindow *window, double delta)
 {
+  if (WS.sliceMode) {
+    return;
+  }
+
   const double HYPER_LOOK_SPEED = 1.4;
   const double MAX_HYPER_YAW = 1.35;
   bool changed = false;
@@ -235,12 +249,82 @@ static void update4DLookControls(GLFWwindow *window, double delta)
   }
 }
 
+static void updateSliceControls(GLFWwindow *window, double delta)
+{
+  if (!WS.sliceMode) {
+    return;
+  }
+
+  const double SLICE_ROTATE_SPEED = 1.4;
+  bool changed = false;
+
+  if (glfwGetKey(window, GLFW_KEY_R)) {
+    WS.sliceAngle += SLICE_ROTATE_SPEED * delta;
+    changed = true;
+  }
+  if (glfwGetKey(window, GLFW_KEY_F)) {
+    WS.sliceAngle -= SLICE_ROTATE_SPEED * delta;
+    changed = true;
+  }
+  if (glfwGetKey(window, GLFW_KEY_G)) {
+    WS.sliceAngle = 0;
+    changed = true;
+  }
+
+  if (changed) {
+    const double TWO_PI = 2.0 * M_PI;
+    WS.sliceAngle = fmod(WS.sliceAngle, TWO_PI);
+    if (WS.sliceAngle < -M_PI) { WS.sliceAngle += TWO_PI; }
+    if (WS.sliceAngle > M_PI) { WS.sliceAngle -= TWO_PI; }
+  }
+}
+
 static glm::vec4 cameraHorizontalForward()
 {
+  if (WS.sliceMode) {
+    glm::vec4 sliceX(cosf(WS.sliceAngle), 0, 0, sinf(WS.sliceAngle));
+    glm::vec4 sliceZ(0, 0, 1, 0);
+    return normalize((float) cos(WS.yaw) * sliceX +
+                     (float) sin(WS.yaw) * sliceZ);
+  }
+
   glm::vec4 xzForward(cosf(WS.yaw), 0, sinf(WS.yaw), 0);
   glm::vec4 wAxis(0, 0, 0, 1);
   return normalize((float) cos(WS.hyperYaw) * xzForward +
                    (float) sin(WS.hyperYaw) * wAxis);
+}
+
+static glm::vec4 cameraRight()
+{
+  if (WS.sliceMode) {
+    glm::vec4 sliceX(cosf(WS.sliceAngle), 0, 0, sinf(WS.sliceAngle));
+    glm::vec4 sliceZ(0, 0, 1, 0);
+    return normalize((float) -sin(WS.yaw) * sliceX +
+                     (float) cos(WS.yaw) * sliceZ);
+  }
+
+  return -WS.over;
+}
+
+static glm::vec4 sliceNormal()
+{
+  return normalize(glm::vec4(-sinf(WS.sliceAngle), 0, 0, cosf(WS.sliceAngle)));
+}
+
+static glm::vec4 sliceViewForward()
+{
+  glm::vec4 horizontalForward = cameraHorizontalForward();
+  glm::vec4 worldUp(0, 1, 0, 0);
+  return normalize((float) cos(WS.pitch) * horizontalForward +
+                   (float) sin(WS.pitch) * worldUp);
+}
+
+static glm::vec4 sliceViewUp()
+{
+  glm::vec4 horizontalForward = cameraHorizontalForward();
+  glm::vec4 worldUp(0, 1, 0, 0);
+  return normalize((float) -sin(WS.pitch) * horizontalForward +
+                   (float) cos(WS.pitch) * worldUp);
 }
 
 static const char *cameraDirectionName()
@@ -265,12 +349,14 @@ static void updateWindowHud(GLFWwindow *window, double now)
   lastUpdate = now;
   char title[256];
   std::snprintf(title, sizeof(title),
-                "mc4d | pos %.1f %.1f %.1f %.1f | dir %s | yaw %.0f pitch %.0f wlook %.0f",
+                "mc4d | %s | pos %.1f %.1f %.1f %.1f | dir %s | yaw %.0f pitch %.0f wlook %.0f slice %.0f",
+                WS.sliceMode ? "slice" : "projection",
                 WS.eye.x, WS.eye.y, WS.eye.z, WS.eye.w,
                 cameraDirectionName(),
                 WS.yaw * 180.0 / M_PI,
                 WS.pitch * 180.0 / M_PI,
-                WS.hyperYaw * 180.0 / M_PI);
+                WS.hyperYaw * 180.0 / M_PI,
+                WS.sliceAngle * 180.0 / M_PI);
   glfwSetWindowTitle(window, title);
 }
 
@@ -534,6 +620,7 @@ int main(int argc, char **argv)
   WS.yaw = 0;
   WS.pitch = 0;
   WS.hyperYaw = 0;
+  WS.sliceAngle = 0;
   WS.lastMouseX = 0;
   WS.lastMouseY = 0;
   WS.mouseLookInitialized = false;
@@ -550,6 +637,7 @@ int main(int argc, char **argv)
   WS.displayBlocks = true;
   WS.displayWireframe = false;
   WS.hideWater = true;
+  WS.sliceMode = false;
   WS.squareWorld = true;
   WS.flyMode = false;
   WS.velocity = glm::vec4(0);
@@ -571,6 +659,13 @@ int main(int argc, char **argv)
   GLuint offsetLoc = mainShader.uniformLocation("offset");
   GLuint skyboxLoc = mainShader.uniformLocation("skybox");
   GLuint eyePos3Loc = mainShader.uniformLocation("eyePos3");
+  GLuint sliceModeLoc = mainShader.uniformLocation("sliceMode");
+  GLuint sliceAngleLoc = mainShader.uniformLocation("sliceAngle");
+  GLuint sliceThicknessLoc = mainShader.uniformLocation("sliceThickness");
+  GLuint sliceForwardLoc = mainShader.uniformLocation("sliceForward");
+  GLuint sliceRightLoc = mainShader.uniformLocation("sliceRight");
+  GLuint sliceUpLoc = mainShader.uniformLocation("sliceUp");
+  GLuint sliceNormalLoc = mainShader.uniformLocation("sliceNormal");
 
   // Wireframe Shader locations
   GLuint wire_worldToEyeMat4DLoc = wireShader.uniformLocation("worldToEyeMat4D");
@@ -653,16 +748,18 @@ int main(int argc, char **argv)
         const float MOVE_SPEED = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) ? 24.0f : 8.0f;
 
         updateFlyCameraFromMouse(window);
+        updateSliceControls(window, delta);
         update4DLookControls(window, delta);
 
         glm::vec4 horizontalForward = cameraHorizontalForward();
+        glm::vec4 right = cameraRight();
         glm::vec4 wAxis(0, 0, 0, 1);
         glm::vec4 move(0);
 
         if (glfwGetKey(window, GLFW_KEY_W)) { move += horizontalForward; }
         if (glfwGetKey(window, GLFW_KEY_S)) { move -= horizontalForward; }
-        if (glfwGetKey(window, GLFW_KEY_D)) { move -= WS.over; }
-        if (glfwGetKey(window, GLFW_KEY_A)) { move += WS.over; }
+        if (glfwGetKey(window, GLFW_KEY_D)) { move += right; }
+        if (glfwGetKey(window, GLFW_KEY_A)) { move -= right; }
         if (glfwGetKey(window, GLFW_KEY_SPACE)) { move += WS.up; }
         if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT)) { move -= WS.up; }
         if (glfwGetKey(window, GLFW_KEY_E)) { move += wAxis; }
@@ -703,16 +800,18 @@ int main(int argc, char **argv)
         const float JUMP_SPEED = 9.0f;
 
         updateFlyCameraFromMouse(window);
+        updateSliceControls(window, delta);
         update4DLookControls(window, delta);
 
         glm::vec4 horizontalForward = cameraHorizontalForward();
+        glm::vec4 right = cameraRight();
         glm::vec4 wAxis(0, 0, 0, 1);
         glm::vec4 move(0);
 
         if (glfwGetKey(window, GLFW_KEY_W)) { move += horizontalForward; }
         if (glfwGetKey(window, GLFW_KEY_S)) { move -= horizontalForward; }
-        if (glfwGetKey(window, GLFW_KEY_D)) { move -= WS.over; }
-        if (glfwGetKey(window, GLFW_KEY_A)) { move += WS.over; }
+        if (glfwGetKey(window, GLFW_KEY_D)) { move += right; }
+        if (glfwGetKey(window, GLFW_KEY_A)) { move -= right; }
         if (glfwGetKey(window, GLFW_KEY_E)) { move += wAxis; }
         if (glfwGetKey(window, GLFW_KEY_Q)) { move -= wAxis; }
 
@@ -862,6 +961,17 @@ int main(int argc, char **argv)
       glUniformMatrix4fv(worldToEyeMat4DLoc, 1, GL_FALSE, glm::value_ptr(worldToEyeMat4D)); GL_ERR_CHK;
       glUniformMatrix4fv(projMat3DLoc, 1, GL_FALSE, glm::value_ptr(projMat3D)); GL_ERR_CHK;
       glUniformMatrix4fv(srmLoc, 1, GL_FALSE, glm::value_ptr(srm)); GL_ERR_CHK;
+      glUniform1i(sliceModeLoc, WS.sliceMode ? 1 : 0); GL_ERR_CHK;
+      glUniform1f(sliceAngleLoc, (float) WS.sliceAngle); GL_ERR_CHK;
+      glUniform1f(sliceThicknessLoc, 0.85f); GL_ERR_CHK;
+      glm::vec4 shaderSliceForward = sliceViewForward();
+      glm::vec4 shaderSliceRight = cameraRight();
+      glm::vec4 shaderSliceUp = sliceViewUp();
+      glm::vec4 shaderSliceNormal = sliceNormal();
+      glUniform4fv(sliceForwardLoc, 1, glm::value_ptr(shaderSliceForward)); GL_ERR_CHK;
+      glUniform4fv(sliceRightLoc, 1, glm::value_ptr(shaderSliceRight)); GL_ERR_CHK;
+      glUniform4fv(sliceUpLoc, 1, glm::value_ptr(shaderSliceUp)); GL_ERR_CHK;
+      glUniform4fv(sliceNormalLoc, 1, glm::value_ptr(shaderSliceNormal)); GL_ERR_CHK;
 
       // Bind the tesseract VAO
       glBindVertexArray(VAO);

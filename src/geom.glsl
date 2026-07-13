@@ -5,19 +5,27 @@ layout(triangle_strip, max_vertices=3) out;
 
 // the 3d eye position
 uniform vec3 eyePos3;
+uniform int sliceMode;
+uniform float sliceThickness;
 
 in vec4 vcolor[];
 out vec4 color;
 
 in vec3 vpos3[];
 in float vdepth4[];
+in float vsliceCenterDist[];
 out vec3 pos3;
 
 out vec3 normal;
 
 void main()
 {
-  if (vdepth4[0] <= 0.25 || vdepth4[1] <= 0.25 || vdepth4[2] <= 0.25) {
+  if (sliceMode != 0 && abs(vsliceCenterDist[0]) > sliceThickness) {
+    return;
+  }
+
+  if (sliceMode == 0 &&
+      (vdepth4[0] <= 0.25 || vdepth4[1] <= 0.25 || vdepth4[2] <= 0.25)) {
     return;
   }
 

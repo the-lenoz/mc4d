@@ -7,6 +7,7 @@
 #include <utility>
 
 static const int32_t WATER_LEVEL = 0;
+static const float CHUNK_PRELOAD_DISTANCE = CHUNK_DIM * 0.8f;
 static const float PLAYER_RADIUS = 0.35f;
 static const float PLAYER_EYE_HEIGHT = 1.62f;
 static const float PLAYER_HEIGHT = 2.0f;
@@ -210,6 +211,10 @@ glm::ivec4 World::chunkForPosition(glm::vec4 position) {
                     (int32_t) std::floor(position.w / CHUNK_DIM));
 }
 
+World::ChunkKey World::keyForChunk(glm::ivec4 chunk) {
+  return ChunkKey{chunk.x, chunk.y, chunk.z, chunk.w};
+}
+
 HyperCubeTypes World::worldSample(int32_t x, int32_t y, int32_t z, int32_t w) {
   HyperCubeTypes woodTesseractBlock = woodTesseractSample(x, y, z, w);
   if (woodTesseractBlock != HCT_AIR) {
@@ -310,14 +315,29 @@ World::World() : centerChunk(0x7fffffff), pendingCenterChunk(0x7fffffff) {
   initPerm();
 }
 
-World::WorldData World::generateAround(glm::ivec4 centerChunk) {
+World::WorldData World::generateChunkData(ChunkKey key) {
   WorldData data;
+  generateChunk(data, key[0], key[1], key[2], key[3]);
+  return data;
+}
 
-  std::cout << "Generating chunks around "
-            << centerChunk.x << ", "
-            << centerChunk.y << ", "
-            << centerChunk.z << ", "
-            << centerChunk.w << std::endl;
+std::vector<World::ChunkResult> World::generateChunks(std::vector<ChunkKey> keys) {
+  std::vector<ChunkResult> result;
+  result.reserve(keys.size());
+
+  for (ChunkKey key : keys) {
+    result.push_back(ChunkResult{key, generateChunkData(key)});
+  }
+
+  return result;
+}
+
+std::vector<World::ChunkKey> World::keysAround(glm::ivec4 centerChunk) {
+  std::vector<ChunkKey> keys;
+  keys.reserve((2 * ACTIVE_CHUNK_RADIUS_XZ + 1) *
+               (2 * ACTIVE_CHUNK_RADIUS_Y + 1) *
+               (2 * ACTIVE_CHUNK_RADIUS_XZ + 1) *
+               (2 * ACTIVE_CHUNK_RADIUS_W + 1));
 
   for (int32_t cx=centerChunk.x - ACTIVE_CHUNK_RADIUS_XZ;
        cx<=centerChunk.x + ACTIVE_CHUNK_RADIUS_XZ; cx++) {
@@ -327,21 +347,13 @@ World::WorldData World::generateAround(glm::ivec4 centerChunk) {
            cz<=centerChunk.z + ACTIVE_CHUNK_RADIUS_XZ; cz++) {
         for (int32_t cw=centerChunk.w - ACTIVE_CHUNK_RADIUS_W;
              cw<=centerChunk.w + ACTIVE_CHUNK_RADIUS_W; cw++) {
-          generateChunk(data, cx, cy, cz, cw);
+          keys.push_back(ChunkKey{cx, cy, cz, cw});
         }
       }
     }
   }
 
-  std::cout << "Active tesseracts: "
-            << "grass=" << data.grassLocs.size()
-            << ", sand=" << data.sandLocs.size()
-            << ", stone=" << data.stoneLocs.size()
-            << ", wood=" << data.woodLocs.size()
-            << ", leaves=" << data.leavesLocs.size()
-            << ", water=" << data.waterLocs.size() << std::endl;
-
-  return data;
+  return keys;
 }
 
 void World::applyData(WorldData data) {
@@ -353,32 +365,148 @@ void World::applyData(WorldData data) {
   leavesLocs = std::move(data.leavesLocs);
 }
 
-bool World::updateAround(glm::vec4 position) {
-  if (pendingData.valid() &&
-      pendingData.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-    centerChunk = pendingCenterChunk;
-    applyData(pendingData.get());
-    pendingCenterChunk = glm::ivec4(0x7fffffff);
-    return true;
+void World::rebuildActiveData() {
+  WorldData data;
+
+  for (ChunkKey key : keysAround(centerChunk)) {
+    auto it = chunks.find(key);
+    if (it == chunks.end()) { continue; }
+
+    WorldData &chunk = it->second;
+    data.stoneLocs.insert(data.stoneLocs.end(), chunk.stoneLocs.begin(), chunk.stoneLocs.end());
+    data.grassLocs.insert(data.grassLocs.end(), chunk.grassLocs.begin(), chunk.grassLocs.end());
+    data.sandLocs.insert(data.sandLocs.end(), chunk.sandLocs.begin(), chunk.sandLocs.end());
+    data.waterLocs.insert(data.waterLocs.end(), chunk.waterLocs.begin(), chunk.waterLocs.end());
+    data.woodLocs.insert(data.woodLocs.end(), chunk.woodLocs.begin(), chunk.woodLocs.end());
+    data.leavesLocs.insert(data.leavesLocs.end(), chunk.leavesLocs.begin(), chunk.leavesLocs.end());
   }
 
-  glm::ivec4 newCenterChunk = chunkForPosition(position);
+  std::cout << "Active tesseracts: "
+            << "grass=" << data.grassLocs.size()
+            << ", sand=" << data.sandLocs.size()
+            << ", stone=" << data.stoneLocs.size()
+            << ", wood=" << data.woodLocs.size()
+            << ", leaves=" << data.leavesLocs.size()
+            << ", water=" << data.waterLocs.size() << std::endl;
 
-  if (newCenterChunk == centerChunk ||
-      (pendingData.valid() && newCenterChunk == pendingCenterChunk)) {
-    return false;
+  applyData(std::move(data));
+}
+
+void World::pruneChunkCache() {
+  const int32_t margin = 1;
+
+  for (auto it=chunks.begin(); it!=chunks.end();) {
+    const ChunkKey &key = it->first;
+    bool keep = std::abs(key[0] - centerChunk.x) <= ACTIVE_CHUNK_RADIUS_XZ + margin &&
+                std::abs(key[1] - centerChunk.y) <= ACTIVE_CHUNK_RADIUS_Y + margin &&
+                std::abs(key[2] - centerChunk.z) <= ACTIVE_CHUNK_RADIUS_XZ + margin &&
+                std::abs(key[3] - centerChunk.w) <= ACTIVE_CHUNK_RADIUS_W + margin;
+
+    if (keep) {
+      ++it;
+    } else {
+      it = chunks.erase(it);
+    }
+  }
+}
+
+glm::ivec4 World::preloadCenterForPosition(glm::vec4 position) {
+  glm::ivec4 target = centerChunk;
+
+  float minX = (centerChunk.x - ACTIVE_CHUNK_RADIUS_XZ) * CHUNK_DIM;
+  float maxX = (centerChunk.x + ACTIVE_CHUNK_RADIUS_XZ + 1) * CHUNK_DIM;
+  float minY = (centerChunk.y - ACTIVE_CHUNK_RADIUS_Y) * CHUNK_DIM;
+  float maxY = (centerChunk.y + ACTIVE_CHUNK_RADIUS_Y + 1) * CHUNK_DIM;
+  float minZ = (centerChunk.z - ACTIVE_CHUNK_RADIUS_XZ) * CHUNK_DIM;
+  float maxZ = (centerChunk.z + ACTIVE_CHUNK_RADIUS_XZ + 1) * CHUNK_DIM;
+  float minW = (centerChunk.w - ACTIVE_CHUNK_RADIUS_W) * CHUNK_DIM;
+  float maxW = (centerChunk.w + ACTIVE_CHUNK_RADIUS_W + 1) * CHUNK_DIM;
+
+  if (position.x < minX + CHUNK_PRELOAD_DISTANCE) { target.x--; }
+  if (position.x > maxX - CHUNK_PRELOAD_DISTANCE) { target.x++; }
+  if (position.y < minY + CHUNK_PRELOAD_DISTANCE) { target.y--; }
+  if (position.y > maxY - CHUNK_PRELOAD_DISTANCE) { target.y++; }
+  if (position.z < minZ + CHUNK_PRELOAD_DISTANCE) { target.z--; }
+  if (position.z > maxZ - CHUNK_PRELOAD_DISTANCE) { target.z++; }
+  if (position.w < minW + CHUNK_PRELOAD_DISTANCE) { target.w--; }
+  if (position.w > maxW - CHUNK_PRELOAD_DISTANCE) { target.w++; }
+
+  return target;
+}
+
+bool World::hasChunksFor(glm::ivec4 targetCenterChunk) {
+  for (ChunkKey key : keysAround(targetCenterChunk)) {
+    if (chunks.find(key) == chunks.end()) {
+      return false;
+    }
   }
 
+  return true;
+}
+
+bool World::requestMissingChunks(glm::ivec4 targetCenterChunk) {
   if (pendingData.valid()) {
     return false;
   }
 
-  pendingCenterChunk = newCenterChunk;
-  pendingData = std::async(std::launch::async, [newCenterChunk]() {
-    return generateAround(newCenterChunk);
+  std::vector<ChunkKey> missing;
+  for (ChunkKey key : keysAround(targetCenterChunk)) {
+    if (chunks.find(key) == chunks.end()) {
+      missing.push_back(key);
+    }
+  }
+
+  if (missing.empty()) {
+    pendingKeys.clear();
+    return false;
+  }
+
+  pendingKeys = missing;
+  pendingCenterChunk = targetCenterChunk;
+  std::cout << "Generating " << missing.size() << " missing chunks around "
+            << targetCenterChunk.x << ", "
+            << targetCenterChunk.y << ", "
+            << targetCenterChunk.z << ", "
+            << targetCenterChunk.w << std::endl;
+  pendingData = std::async(std::launch::async, [missing]() {
+    return generateChunks(missing);
   });
 
   return false;
+}
+
+bool World::updateAround(glm::vec4 position) {
+  bool changed = false;
+
+  if (pendingData.valid() &&
+      pendingData.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+    for (ChunkResult &result : pendingData.get()) {
+      chunks[result.key] = std::move(result.data);
+    }
+    pendingKeys.clear();
+    pendingCenterChunk = glm::ivec4(0x7fffffff);
+  }
+
+  glm::ivec4 newCenterChunk = chunkForPosition(position);
+
+  if (newCenterChunk != centerChunk) {
+    if (hasChunksFor(newCenterChunk)) {
+      centerChunk = newCenterChunk;
+      rebuildActiveData();
+      pruneChunkCache();
+      changed = true;
+    } else {
+      requestMissingChunks(newCenterChunk);
+      return changed;
+    }
+  }
+
+  glm::ivec4 preloadCenter = preloadCenterForPosition(position);
+  if (!hasChunksFor(preloadCenter)) {
+    requestMissingChunks(preloadCenter);
+  }
+
+  return changed;
 }
 
 bool World::loadAround(glm::vec4 position) {
@@ -386,16 +514,35 @@ bool World::loadAround(glm::vec4 position) {
 
   if (pendingData.valid()) {
     pendingData.wait();
-    pendingData.get();
+    for (ChunkResult &result : pendingData.get()) {
+      chunks[result.key] = std::move(result.data);
+    }
     pendingCenterChunk = glm::ivec4(0x7fffffff);
-  }
-
-  if (newCenterChunk == centerChunk) {
-    return false;
+    pendingKeys.clear();
   }
 
   centerChunk = newCenterChunk;
-  applyData(generateAround(centerChunk));
+
+  std::vector<ChunkKey> missing;
+  for (ChunkKey key : keysAround(centerChunk)) {
+    if (chunks.find(key) == chunks.end()) {
+      missing.push_back(key);
+    }
+  }
+
+  if (!missing.empty()) {
+    std::cout << "Loading " << missing.size() << " chunks around "
+              << centerChunk.x << ", "
+              << centerChunk.y << ", "
+              << centerChunk.z << ", "
+              << centerChunk.w << std::endl;
+    for (ChunkResult &result : generateChunks(missing)) {
+      chunks[result.key] = std::move(result.data);
+    }
+  }
+
+  rebuildActiveData();
+  pruneChunkCache();
   return true;
 }
 

@@ -1,147 +1,146 @@
-# mc4d #
+# mc4d
 
-## Controls ##
-    == Basic Controls ==
-    ESC   => Exit mc4d
+`mc4d` is a small Minecraft-like 4D voxel renderer written in C++ and OpenGL. The project renders hypercubes, projects them into 3D, and then draws the result to the screen with a regular 3D camera.
 
-    == Controling the display ==
-    ;     => Toggle between displaying round-world and minecraft-world
-    ,     => Toggle display of example hypercube wireframe
-    .     => Toggle display of hypervoxel world
-    + / - => Zoom in/out
-
-    == Rotating the scene ==
-    Q / A => Rotate scene in the XY plane
-    Z     => Autorotate scene in the XY plane
-    W / S => Rotate scene in the XZ plane
-    X     => Autorotate scene in the XZ plane
-    E / D => Rotate scene in the XW plane
-    C     => Autorotate scene in the XW plane
-    R / F => Rotate scene in the YZ plane
-    V     => Autorotate scene in the YZ plane
-    T / G => Rotate scene in the YW plane
-    B     => Autorotate scene in the YW plane
-    Y / H => Rotate scene in the ZW plane
-    N     => Autorotate scene in the ZW plane
-
-    == Rotating the 3d projection ==
-    UP/DOWN/LEFT/RIGHT => Rotate 3d projection
-
-## Building ##
-Run `make` to build the `mc4d` executable.
-
-Unfortunately, right now the dependencies are a bit messed up, meaning that if you
-change a file in the project, you will need to `make clean` before you `make` again.
-
-You can also `make run` if you want to build the project and run it in one fell swoop.
-
-I haven't had a chance to test this project on an platforms other than on my computer,
-which is a MacBook Pro running Mac OS X 10.10.2 Yosemite. You will definitely need
-the libraraies list in the Library section below.
-
-I will try to get it working on the caslab machines ASAP. Once I do, the repository on
-[GitHub](https://github.com/mystor/mc4d) will be updated with a new version.
-
-## Concept ##
-The idea behind mc4d was to experiment with what it would be like to render a minecraft-like world, but in 4d. The idea was that players would be able to explore a 4d world and come to understand 4d objects better because It would take a familiar concept (minecraft), and then reveal how it could be expanded into the 4th dimension.
-
-The final end product acts as a viewer for 4d hyper-voxel volumes, textured in a way similar to Minecraft.
+This fork is focused on turning the original viewer into an explorable first-person prototype. It now has FPV camera control, walking physics, jumping, sprinting, player collisions, and chunk loading around the player.
 
 ![mc4d](screenshots/mc4d.gif)
 
-## Execution ##
-The problem of how to render these 3d objects took quite a while to resolve. The original idea was to represent the world as a 4d array of tiles. Each tile would be either filled (with a block type), or empty, and a ray-tracer would traverse through these textures on the GPU, and when it intersected with a block, it would lookup the color of that block. As this vector math translated very easily to 4d space, it would mean that I could use fairly simple math, but get cool 4d effects fairly easily.
+## Current State
 
-Unfortunately, the number of texture accesses per pixel which were required in order to get this to work was too high. With my text 3d volume, the program was running at only about 30fps, and with an emulated 4d texture, the workload would increase by double per texture lookup. I also experimented with using distance fields to render the scene instead, but ran into resolution problems.
+Implemented:
 
-![raytracer](screenshots/wip0.png)
+* First-person view with mouse look.
+* Walking mode with gravity, jumping, sprinting, damping, and ground checks.
+* Free-fly mode for debugging and easier exploration.
+* Player collision against solid 4D blocks using a player-sized AABB.
+* Axis-by-axis collision resolution to prevent clipping through blocks.
+* Surface spawn search so the player starts above terrain.
+* Dynamic square-world chunks generated and loaded around the player.
+* Procedural 4D terrain with grass, stone, sand, water, wood, leaves, trees, and simple wood tesseract structures.
+* Optional 4D slice mode.
+* Original round-world preview mode and hypercube wireframe overlay.
+* Skybox, water pass, block shading, and instanced hypercube rendering.
 
-As I was having severe performance problems with the raytracer, I switched to using standard 3d rendering techniques with faces. I generated the vertices for each of the 24 faces on a tesseract (the faces of the 8 bounding cubes, minus the shared faces). I then used the projection math from [Steve Hollasch's 1991 Master's Thesis](http://steve.hollasch.net/thesis/index.html), which is an extension of the standard 3d projection math into 4d space.
+Not implemented yet:
 
-To render using this technique on the GPU, I send the vertex locations of the faces to the GPU as vec4s. The shared matrix and factors are also computed on the CPU and then sent as a uniform. The matrix multiplication is then done on the GPU, and the resulting 3d points are projected using a matrix from `glm::perspective` to screen volume coordinates. The code for the projection can be found in `project.h`, `project.cpp`, `vert.glsl`, and `wirevert.glsl`.
+* Block placing and breaking.
+* Inventory or survival mechanics.
+* Collisions in round-world mode. Player collision is currently used for the square world.
+* Legacy scene autorotation controls. The toggle flags exist in code, but the rotation update is not wired into the current movement loop.
+* Full gameplay loop.
 
-By using that basic strategy, I was able to render a small 4d scene rotating in 4d space. This basic rendering strategy is what is used in the final product, with a few changes.
+## Controls
 
-![First spinning 4d world](screenshots/wip1.gif)
+### Basic
 
-The world which is being displayed was dynamically generated using 4d simplex noise. To get simplex noise working to render a nice world, I ported the java code from [this paper](http://webstaff.itn.liu.se/~stegu/simplexnoise/simplexnoise.pdf) to c++. The code for this can be found in `noise.h` and `noise.cpp` For simplicity, and because of the small world sizes I am generating, only one frequency of simplex noise is used to create the world. The world generation code for the minecraft-like terrain can be found in `world.h` and `world.cpp`.
+| Key | Action |
+| --- | --- |
+| `Esc` | Exit |
+| Mouse | Look around |
+| `Tab` | Toggle free-fly mode |
+| Double `Space` | Toggle free-fly mode |
+| `0` | Reset legacy 4D scene rotations and slice angle |
 
-One of the goals for the project was to not have external resources, and to generate everything programmatically. The texture for stone is generated using `rand()`, with a fixed seed set with `srand(int)`. The fixed seed allowed for me to find a salt-and-pepper noise value which looked good, without any serious clumps of high or low values, creating a nice texture for the blocks. The texture resolution was chosen to be 16x16 to match with Minecraft's style, and `GL_NEAREST` was chosen as the blending for the same reason.
+### Walking Mode
 
-Next, I changed the way the rendering system worked. Originally, I used pre-built VAOs containing all of the vertices for all of the hypercubes in the terrain. I changed the system to instead use a 1d texture to store the hypercube locations, and `glDrawArraysInstanced()` to draw them. Each voxel would use it's Instance_ID to look up it's location the the texture. Unfortunately, this limited the number of possible voxels to the size of a 1d texture, which on my machine is 16384.
+Walking mode is the default mode.
 
-To get around this, and to improve the visuals of the scene. I added multiple block types. Each of these block types has its own texture, which allows each block type to have up to 16384 blocks. I started with just adding grass (which grows on the top of stone blocks), but have since extended it to support sand and water as well.
+| Key | Action |
+| --- | --- |
+| `W` / `S` | Move forward / backward |
+| `A` / `D` | Strafe left / right |
+| `Q` / `E` | Move through the W axis |
+| `Space` | Jump |
+| `Left Ctrl` | Sprint |
 
-![glitchy rendering at specific camera positions](screenshots/wip2.gif)
+### Free-Fly Mode
 
-Unfortunately, as you can see above, I discovered that when the camera gets into certain positions on the screen, the projection freaks out and draws random polygons across the screen. After many hours of trying to figure out why and fix the problem, I decided to change the control scheme to instead allow for the viewing of the 4d volume externally, and allow rotation of the world in 4d space using keybindings.
+| Key | Action |
+| --- | --- |
+| `W` / `S` | Fly forward / backward |
+| `A` / `D` | Fly left / right |
+| `Space` | Fly up |
+| `Left Shift` | Fly down |
+| `Q` / `E` | Fly through the W axis |
+| `Left Ctrl` | Increase movement speed |
 
-Unfortunately, when rotating the minecraft-style world, there were a lot of times when the world looked boring, as you were looking at the flat stone bottom of the world. To avoid that, I created another, round world.
+### 4D View
 
-![round world](screenshots/wip3.gif)
+| Key | Action |
+| --- | --- |
+| `R` / `F` | Look/rotate through the W direction, or rotate the slice in slice mode |
+| `G` | Reset W-look or slice rotation |
+| `M` | Toggle 4D slice mode |
+| `[` / `]` | Decrease / increase field of view |
 
-At one point, I also tried adding clouds around the round world. They have been taken out and aren't present in the final version though, as I thought that they looked bad.
+### Display Toggles
 
-![round world with clouds](screenshots/wip4.gif)
+| Key | Action |
+| --- | --- |
+| `;` | Toggle square world / round world |
+| `,` | Toggle example hypercube wireframe |
+| `.` | Toggle block rendering |
+| `'` | Toggle water visibility |
 
-I also added many more rendering features to make the environment nicer to look at. I made water transparent (which required using a multipass rendering setup using intermediate textures and a blending step). Added basic diffuse phong shading to blocks (which required computing the normals of the faces using a geometry shader). And made the water reflect a skybox. The images for the skybox were taken from [this resource pack on the unity asset store](https://www.assetstore.unity3d.com/en/#!/content/3392).
+## Building
 
-![round world with reflections in skybox](screenshots/wip5.gif)
+Install the required native libraries:
 
+* GLEW
+* GLFW 3
+* GLM
+* libpng
+* `xxd`, used by the Makefile to embed GLSL shader files into generated C headers
 
-## Code Credit ##
+Build:
 
-Not all of the code in this project is 100% mine. This section acts as a place for me to credit the resources which I used to create mc4d.
+```sh
+make
+```
 
-    GLFW starter code / documentation:
-      Used to set up the event loop and an OpenGl 4.1 context, as well as for keyboard input.
-      http://www.glfw.org/docs/latest/quick.html#quick_example
+Run:
 
-    4d cross product and 4d to 3d projection math:
-      Used for rendering all 4d hypervolumes in the program.
-      http://steve.hollasch.net/thesis/chapter4.html
+```sh
+make run
+```
 
-    4d simplex noise:
-      Code ported to c++ by me. Used for terrain generation.
-      http://webstaff.itn.liu.se/~stegu/simplexnoise/simplexnoise.pdf
+Clean generated objects, dependency files, shader headers, and the executable:
 
-    Framebuffer creation and use:
-      Used to enable smooth transparent rendering of the water volumes.
-      Sample code which was used to get my code working nicely.
-      https://www.opengl.org/wiki/Framebuffer_Object_Examples#Color_texture.2C_Depth_texture
+```sh
+make clean
+```
 
-    Skybox Textures:
-      Used to give an awesome environment for the reflective water to show off.
-      https://www.assetstore.unity3d.com/en/#!/content/3392
+The executable is written to `./mc4d`.
 
-    PNG Reading Code:
-      Used to read in the skybox texture data using libpng. Adapted from:
-      https://en.wikibooks.org/wiki/OpenGL_Programming/Intermediate/Textures
+## Code Layout
 
-    4D-Bresenham Line Drawing Algorithm:
-      Algorithm not used in final product, but used in raytracer.
-      https://sites.google.com/site/proyectosroboticos/bresenham-6d
+| Path | Purpose |
+| --- | --- |
+| `src/main.cpp` | Application setup, input, camera, walking/free-fly movement, collisions during movement, rendering loop |
+| `src/world.cpp`, `src/world.h` | Square-world terrain generation, chunk cache, async chunk loading, collision sampling, spawn search |
+| `src/roundworld.cpp`, `src/roundworld.h` | Original finite round-world generator |
+| `src/tesseract.cpp`, `src/tesseract.h` | Tesseract vertex and wireframe geometry |
+| `src/project.cpp`, `src/project.h` | 4D-to-3D projection math |
+| `src/*glsl` | OpenGL shaders |
+| `src/blocktype.h` | GPU upload and binding for per-block-type instance locations |
+| `src/skybox.h`, `src/readpng.*` | Skybox loading and PNG support |
 
-    OpenGL Wiki:
-      Lots of documentation and information regarding the OpenGL apis.
-      https://www.opengl.org/wiki
+## How Movement Works
 
-    GPU Program Management Code:
-      Adapted from code provided for assignment 1.
+The player position is stored as a 4D eye position: `x`, `y`, `z`, and `w`. Walking mode keeps horizontal velocity on `x`, `z`, and `w`, applies gravity on `y`, and performs movement in small substeps. Each substep is tested axis by axis against `World::collidesWithPlayer()`.
 
-    Help from Ben Cecchetto:
-      My CISC 454 professor. Without whom this project could never have happened.
+The collision shape is a player-sized 4D AABB around the eye position. Solid blocks are sampled from the procedural world through `World::worldSample()`, so collisions work against terrain, trees, and generated wood structures without needing a separate physics mesh.
 
-## Libraries ##
-This project makes use of the following libraries:
+Free-fly mode uses the same camera basis and keeps square-world collision checks, but it ignores gravity and allows vertical movement with `Space` / `Left Shift`.
 
-* libpng: PNG reading and parsing
-* GLFW: Cross platform OpenGl context creation and input controls
-* GLEW: Function declarations & handling of OpenGL extensions
-* glm: Matrix and Vector math library used throughout the project
+## Credits
 
-## Code Organization ##
-The code in this project looks just awful. `main.cpp` is a massive mess, and many files
-simply don't have the TLC which I would like to give to them. Unfortunately, I don't yet
-have enough time to refactor the code and clean it up. At some point I may do that, in
-which case, the cleaner, easier to read, code will be located on [GitHub](https://github.com/mystor/mc4d).
+The project is based on the original `mc4d` renderer by Michael Layzell. The code still uses the original 4D projection approach, simplex noise terrain generation, OpenGL rendering pipeline, framebuffer-based water pass, and skybox resources described in the upstream project.
+
+Useful references used by the original project:
+
+* Steve Hollasch's 4D projection math: <http://steve.hollasch.net/thesis/index.html>
+* 4D simplex noise paper: <http://webstaff.itn.liu.se/~stegu/simplexnoise/simplexnoise.pdf>
+* GLFW documentation: <https://www.glfw.org/docs/latest/>
+* OpenGL Wiki framebuffer examples: <https://www.opengl.org/wiki/Framebuffer_Object_Examples>

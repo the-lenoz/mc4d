@@ -11,6 +11,13 @@ uniform mat4 worldToEyeMat4D;
 
 // The reciprocal of the tangent of the view angle over 2 (used by 4d => 3d projection)
 uniform float recipTanViewAngle;
+uniform int sliceMode;
+uniform float sliceAngle;
+uniform float sliceThickness;
+uniform vec4 sliceForward;
+uniform vec4 sliceRight;
+uniform vec4 sliceUp;
+uniform vec4 sliceNormal;
 
 // The 3d projection matrix
 uniform mat4 projMat3D;
@@ -28,6 +35,7 @@ uniform mat4 srm;
 out vec4 vcolor;
 out vec3 vpos3;
 out float vdepth4;
+out float vsliceCenterDist;
 
 // This function accepts some pre-computed values which will help speed stuff up
 vec4 projectTo3D()
@@ -36,12 +44,25 @@ vec4 projectTo3D()
   ivec2 hypercubeTexSize = textureSize(hypercube, 0);
   ivec2 hypercubeTexCoord = ivec2(gl_InstanceID % hypercubeTexSize.x,
                                   gl_InstanceID / hypercubeTexSize.x);
-  vec4 realPosition = position + texelFetch(hypercube, hypercubeTexCoord, 0);
+  vec4 blockPosition = texelFetch(hypercube, hypercubeTexCoord, 0);
+  vec4 realPosition = position + blockPosition;
 
   // HACK(michael): Offset such that the world is centered at (0,0,0,0)
   // realPosition -= vec4(7.5, 7.5, 7.5, 7.5);
   realPosition -= vec4(offset, offset, offset, offset);// vec4(15.5, 15.5, 15.5, 15.5);
   realPosition *= srm;
+
+  if (sliceMode != 0) {
+    vec4 blockCenter = (blockPosition - vec4(offset, offset, offset, offset)) * srm;
+    vec4 rel = realPosition - eye;
+    vec4 centerRel = blockCenter - eye;
+
+    vsliceCenterDist = dot(centerRel, sliceNormal);
+    vdepth4 = 1.0;
+    return vec4(-dot(rel, sliceForward), -dot(rel, sliceUp), dot(rel, sliceRight), 1);
+  }
+
+  vsliceCenterDist = 0.0;
 
   // Get the position in eye-space
   vec4 eyePos = (realPosition - eye) * worldToEyeMat4D;
